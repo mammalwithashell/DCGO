@@ -1,0 +1,407 @@
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
+using System.Text;
+using UnityEngine;
+
+namespace Digimon.Recording
+{
+    /// <summary>
+    /// Records every decision made by either player during a DCGO game into a
+    /// JSONL file, encoded as 2192-action-space IDs. The Rust replay harness
+    /// (<c>code/tools/dcgo-replay/</c>) consumes these recordings to validate
+    /// engine parity; the BC dataset emitter consumes the same recordings to
+    /// produce behavioral-cloning seed data.
+    ///
+    /// One MonoBehaviour instance is bootstrapped at scene-load time via
+    /// <see cref="Bootstrap"/> and made discoverable through the static
+    /// <see cref="Instance"/> accessor. Call sites in DCGO use the
+    /// null-conditional pattern so the absence of the recorder is benign:
+    ///
+    ///   <c>GameRecorder.Instance?.LogAction(actor, action);</c>
+    ///
+    /// Schema:
+    ///   <c>game_start</c>  — header row, emitted once per game with both decks
+    ///   <c>action</c>      — one row per decision, with <c>actor</c>, <c>action_id</c>, <c>phase</c>
+    ///   <c>encoder_failure</c> — sentinel for decisions the encoder cannot yet map
+    ///   <c>game_end</c>    — terminal row with winner and reason
+    ///
+    /// See <c>openspec/changes/add-dcgo-recording-parity-harness/specs/dcgo-parity-harness/spec.md</c>
+    /// for the authoritative schema definition.
+    /// </summary>
+    public sealed class GameRecorder : MonoBehaviour
+    {
+        // ── Lifecycle / bootstrap ─────────────────────────────────────────
+
+        public static GameRecorder Instance { get; private set; }
+
+        public RecorderConfig Config { get; private set; } = new RecorderConfig();
+
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
+        private static void Bootstrap()
+        {
+            // One instance, persists across scene loads (Opening → BattleScene).
+            // Guard against double-bootstrap; Unity may invoke this method
+            // multiple times under domain-reload edge cases.
+            if (Instance != null) return;
+
+            var go = new GameObject("GameRecorder");
+            DontDestroyOnLoad(go);
+            Instance = go.AddComponent<GameRecorder>();
+        }
+
+        // ── State ─────────────────────────────────────────────────────────
+
+        private StreamWriter _writer;
+        private string _currentRecordingPath;
+        private int _stepIndex;
+        private int _rowsSinceFlush;
+        private bool _gameInProgress;
+        private string _gameId;
+
+        // ── Public API: lifecycle ─────────────────────────────────────────
+
+        /// <summary>
+        /// Begin a new recording. Called from <c>TurnStateMachine.StartGame</c>
+        /// once both players' decks have been finalized and the game-loop is
+        /// about to execute.
+        /// </summary>
+        /// <param name="myPlayerId">The local player's ID (0 or 1) — i.e.
+        /// <c>GManager.instance.You.PlayerID</c>.</param>
+        /// <param name="myDeckCardIds">Local player's post-shuffle deck order
+        /// (card IDs like "BT15-104", in the order they will be drawn).</param>
+        /// <param name="oppDeckCardIds">Opponent's post-shuffle deck order, or
+        /// <c>null</c> for PvP (opaque-opponent mode for the Rust replay).</param>
+        /// <param name="isAi">True if this is a Bot Match.</param>
+        /// <param name="oppDecklistComposition">For PvP only: the opponent's
+        /// full decklist as an unordered multiset (composition without
+        /// order). Read from <c>Opponent.PhotonPlayer.CustomProperties</c>
+        /// under the <c>"BattleDeckData"</c> key — DCGO publishes both
+        /// players' decklists there during room setup. <c>null</c> for
+        /// Bot Match (the opponent's deck IS observable, so
+        /// <c>oppDeckCardIds</c> carries it instead).</param>
+        public void LogGameStart(int myPlayerId, IList<string> myDeckCardIds,
+                                 IList<string> oppDeckCardIds, bool isAi,
+                                 IList<string> oppDecklistComposition = null)
+        {
+            if (!Config.Enabled) return;
+            if (isAi && !Config.RecordBotMatches) return;
+            if (!isAi && !Config.RecordPvPMatches) return;
+
+            // Defensive: if a previous game didn't end cleanly (crash, force-quit,
+            // exception in mid-game logging), close out gracefully before starting
+            // a new one so we don't leak file handles.
+            if (_gameInProgress)
+            {
+                Debug.LogWarning("[GameRecorder] LogGameStart called while a prior game " +
+                                 "is still open; force-closing the prior recording.");
+                CloseCurrentRecording(forceWinner: -1, reason: "interrupted");
+            }
+
+            _gameId = Guid.NewGuid().ToString("N");
+            _stepIndex = 0;
+            _rowsSinceFlush = 0;
+            _gameInProgress = true;
+
+            try
+            {
+                Directory.CreateDirectory(Config.ResolvedOutputDirectory);
+                var timestamp = DateTime.UtcNow.ToString("yyyyMMddTHHmmssZ",
+                                                        CultureInfo.InvariantCulture);
+                _currentRecordingPath = Path.Combine(
+                    Config.ResolvedOutputDirectory,
+                    $"{timestamp}_{_gameId}.jsonl");
+                _writer = new StreamWriter(_currentRecordingPath, append: false, Encoding.UTF8);
+            }
+            catch (Exception e)
+            {
+                Debug.LogError($"[GameRecorder] failed to open recording file: {e.Message}");
+                _gameInProgress = false;
+                _writer = null;
+                return;
+            }
+
+            var sb = new StringBuilder(256);
+            sb.Append('{');
+            AppendKv(sb, "v", ActionSpace.SCHEMA_VERSION); sb.Append(',');
+            AppendKv(sb, "type", "game_start");           sb.Append(',');
+            AppendKv(sb, "game_id", _gameId);             sb.Append(',');
+            AppendKv(sb, "timestamp", DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture)); sb.Append(',');
+            AppendKv(sb, "my_player_id", myPlayerId);     sb.Append(',');
+            AppendKv(sb, "is_ai", isAi);                  sb.Append(',');
+            AppendKvArray(sb, "my_deck_post_shuffle", myDeckCardIds); sb.Append(',');
+            if (oppDeckCardIds == null)
+            {
+                sb.Append("\"opp_deck_post_shuffle\":null");
+            }
+            else
+            {
+                AppendKvArray(sb, "opp_deck_post_shuffle", oppDeckCardIds);
+            }
+            if (oppDecklistComposition != null)
+            {
+                sb.Append(',');
+                AppendKvArray(sb, "opp_decklist_composition", oppDecklistComposition);
+            }
+            sb.Append('}');
+            WriteRow(sb.ToString());
+        }
+
+        /// <summary>
+        /// Log a card revealed from an opaque pile — the recorder writes
+        /// one of these every time a card belonging to the opaque opponent
+        /// becomes visible to the local client (draws, security pops,
+        /// mill, peek effects).
+        /// </summary>
+        /// <param name="actor">PlayerId whose pile produced the reveal (i.e.
+        /// the opaque opponent in PvP recordings).</param>
+        /// <param name="cardId">The card identity now known (e.g. "BT15-104").</param>
+        /// <param name="source">One of "draw", "security", "mill", "effect".
+        /// Drives the engine's <c>RevealKind</c> tag at replay time.</param>
+        public void LogReveal(int actor, string cardId, string source)
+        {
+            if (!_gameInProgress) return;
+            if (string.IsNullOrEmpty(cardId))
+            {
+                Debug.LogWarning("[GameRecorder] LogReveal called with empty cardId; skipping.");
+                return;
+            }
+            var sb = new StringBuilder(96);
+            sb.Append('{');
+            AppendKv(sb, "type", "reveal");      sb.Append(',');
+            AppendKv(sb, "step", _stepIndex);    sb.Append(',');
+            AppendKv(sb, "actor", actor);        sb.Append(',');
+            AppendKv(sb, "card_id", cardId);     sb.Append(',');
+            AppendKv(sb, "source", source ?? "effect");
+            sb.Append('}');
+            WriteRow(sb.ToString());
+            _stepIndex++;
+        }
+
+        /// <summary>
+        /// End the current recording. Called from <c>TurnStateMachine.EndGame</c>.
+        /// </summary>
+        /// <param name="winnerPlayerId">0 or 1; -1 if no winner (disconnect / draw).</param>
+        /// <param name="reason">Free-text reason: "security_zero", "deck_out",
+        /// "concede", "disconnect", etc. Recorded verbatim; replay harness
+        /// keys cross-game stats by this field.</param>
+        public void LogGameEnd(int winnerPlayerId, string reason)
+        {
+            if (!_gameInProgress) return;
+            CloseCurrentRecording(winnerPlayerId, reason);
+        }
+
+        // ── Public API: per-decision logging ──────────────────────────────
+
+        /// <summary>
+        /// Log a main-phase action (one of the six <c>MainPhaseAction</c> subclasses).
+        /// Called from inside <c>TurnStateMachine.QueueMainPhaseAction</c> immediately
+        /// before the <c>photonView.RPC</c> dispatch.
+        /// </summary>
+        public void LogAction(int actorPlayerId, MainPhaseAction action,
+                              string phaseName, Player actorPlayer)
+        {
+            if (!_gameInProgress) return;
+            var encoded = ActionEncoder.EncodeMainPhaseAction(actorPlayerId, action, actorPlayer);
+            EmitDecisionRow(actorPlayerId, encoded, phaseName, source: "main_phase");
+
+            // PlayCardAction can baked-in digivolution sources; surface them as
+            // explicit subsequent rows so the replay stream stays faithful to
+            // our 2192-space action decomposition (one card play + N source picks).
+            foreach (var extra in ActionEncoder.DecomposePlayCardExtras(action, actorPlayerId))
+            {
+                EmitDecisionRow(actorPlayerId, extra, phaseName, source: "play_card_extra");
+            }
+        }
+
+        /// <summary>
+        /// Log a selection response (int-valued; covers all <c>SelectIntSelection</c>
+        /// callers). Called from inside <c>UserSelectionManager.SetIntForPlayer</c>.
+        /// </summary>
+        public void LogSelectionInt(int actorPlayerId, int value, string phaseName)
+        {
+            if (!_gameInProgress) return;
+            var encoded = ActionEncoder.EncodeSelectionInt(actorPlayerId, value, phaseName);
+            EmitDecisionRow(actorPlayerId, encoded, phaseName, source: "selection_int");
+        }
+
+        /// <summary>
+        /// Log a selection response (bool-valued; covers all <c>SetBoolSelection</c>
+        /// callers — yes/no prompts, optional triggers). Called from inside
+        /// <c>UserSelectionManager.SetBoolForPlayer</c>.
+        /// </summary>
+        public void LogSelectionBool(int actorPlayerId, bool value, string phaseName)
+        {
+            if (!_gameInProgress) return;
+            var encoded = ActionEncoder.EncodeSelectionBool(actorPlayerId, value, phaseName);
+            EmitDecisionRow(actorPlayerId, encoded, phaseName, source: "selection_bool");
+        }
+
+        /// <summary>
+        /// Log a mulligan decision. Called from <c>TurnStateMachine.SetRedraw</c>.
+        /// </summary>
+        public void LogMulligan(int actorPlayerId, bool redrew)
+        {
+            if (!_gameInProgress) return;
+            var encoded = ActionEncoder.EncodeMulligan(redrew);
+            EmitDecisionRow(actorPlayerId, encoded, phase: "Mulligan", source: "mulligan");
+        }
+
+        // ── Internals ─────────────────────────────────────────────────────
+
+        private void EmitDecisionRow(int actor, ActionEncoder.Encoded encoded,
+                                     string phase, string source)
+        {
+            var sb = new StringBuilder(160);
+            sb.Append('{');
+            if (encoded.IsFailure)
+            {
+                AppendKv(sb, "type", "encoder_failure"); sb.Append(',');
+                AppendKv(sb, "step", _stepIndex);        sb.Append(',');
+                AppendKv(sb, "actor", actor);            sb.Append(',');
+                AppendKv(sb, "phase", phase ?? "");      sb.Append(',');
+                AppendKv(sb, "source", source);          sb.Append(',');
+                AppendKv(sb, "reason", encoded.FailureReason ?? "unknown"); sb.Append(',');
+                AppendKv(sb, "raw_value", encoded.RawDebugValue);
+            }
+            else
+            {
+                AppendKv(sb, "type", "action");                  sb.Append(',');
+                AppendKv(sb, "step", _stepIndex);                sb.Append(',');
+                AppendKv(sb, "actor", actor);                    sb.Append(',');
+                AppendKv(sb, "action_id", encoded.ActionId);     sb.Append(',');
+                AppendKv(sb, "phase", phase ?? "");               sb.Append(',');
+                AppendKv(sb, "source", source);
+            }
+            sb.Append('}');
+            WriteRow(sb.ToString());
+            _stepIndex++;
+        }
+
+        private void WriteRow(string json)
+        {
+            if (_writer == null) return;
+            try
+            {
+                _writer.WriteLine(json);
+                _rowsSinceFlush++;
+                if (_rowsSinceFlush >= Config.FlushEveryNRows)
+                {
+                    _writer.Flush();
+                    _rowsSinceFlush = 0;
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.LogError($"[GameRecorder] write failed: {e.Message}");
+                // Drop the writer to avoid further per-row error spam; the
+                // recording is now corrupted, but DCGO keeps running.
+                try { _writer.Dispose(); } catch { /* swallow */ }
+                _writer = null;
+                _gameInProgress = false;
+            }
+        }
+
+        private void CloseCurrentRecording(int forceWinner, string reason)
+        {
+            try
+            {
+                if (_writer != null)
+                {
+                    var sb = new StringBuilder(96);
+                    sb.Append('{');
+                    AppendKv(sb, "type", "game_end"); sb.Append(',');
+                    AppendKv(sb, "winner", forceWinner); sb.Append(',');
+                    AppendKv(sb, "reason", reason ?? ""); sb.Append(',');
+                    AppendKv(sb, "total_steps", _stepIndex);
+                    sb.Append('}');
+                    _writer.WriteLine(sb.ToString());
+                    _writer.Flush();
+                    _writer.Dispose();
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[GameRecorder] close failed: {e.Message}");
+            }
+            finally
+            {
+                _writer = null;
+                _gameInProgress = false;
+                _stepIndex = 0;
+                _rowsSinceFlush = 0;
+            }
+        }
+
+        private void OnApplicationQuit()
+        {
+            // Don't leave the file half-written if Unity is shutting down
+            // mid-game (closing the editor, alt-F4 in standalone, etc.).
+            if (_gameInProgress)
+            {
+                CloseCurrentRecording(forceWinner: -1, reason: "app_quit");
+            }
+        }
+
+        // ── JSON formatting helpers ───────────────────────────────────────
+        // We hand-format rather than pulling in JsonUtility / Newtonsoft so
+        // the dependency footprint is zero and the wire format is stable
+        // across Unity versions. Output is ASCII-only string escaping.
+
+        private static void AppendKv(StringBuilder sb, string key, string value)
+        {
+            sb.Append('"'); sb.Append(key); sb.Append("\":");
+            AppendQuotedString(sb, value);
+        }
+        private static void AppendKv(StringBuilder sb, string key, int value)
+        {
+            sb.Append('"'); sb.Append(key); sb.Append("\":");
+            sb.Append(value.ToString(CultureInfo.InvariantCulture));
+        }
+        private static void AppendKv(StringBuilder sb, string key, uint value)
+        {
+            sb.Append('"'); sb.Append(key); sb.Append("\":");
+            sb.Append(value.ToString(CultureInfo.InvariantCulture));
+        }
+        private static void AppendKv(StringBuilder sb, string key, bool value)
+        {
+            sb.Append('"'); sb.Append(key); sb.Append("\":");
+            sb.Append(value ? "true" : "false");
+        }
+        private static void AppendKvArray(StringBuilder sb, string key, IList<string> values)
+        {
+            sb.Append('"'); sb.Append(key); sb.Append("\":[");
+            for (int i = 0; i < values.Count; i++)
+            {
+                if (i > 0) sb.Append(',');
+                AppendQuotedString(sb, values[i]);
+            }
+            sb.Append(']');
+        }
+        private static void AppendQuotedString(StringBuilder sb, string s)
+        {
+            if (s == null) { sb.Append("null"); return; }
+            sb.Append('"');
+            for (int i = 0; i < s.Length; i++)
+            {
+                char c = s[i];
+                switch (c)
+                {
+                    case '"':  sb.Append("\\\""); break;
+                    case '\\': sb.Append("\\\\"); break;
+                    case '\n': sb.Append("\\n");  break;
+                    case '\r': sb.Append("\\r");  break;
+                    case '\t': sb.Append("\\t");  break;
+                    default:
+                        if (c < 0x20)
+                            sb.AppendFormat(CultureInfo.InvariantCulture, "\\u{0:X4}", (int)c);
+                        else
+                            sb.Append(c);
+                        break;
+                }
+            }
+            sb.Append('"');
+        }
+    }
+}

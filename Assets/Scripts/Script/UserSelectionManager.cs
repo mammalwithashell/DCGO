@@ -26,6 +26,13 @@ public class UserSelectionManager : MonoBehaviourPunCallbacks
             return;
         }
 
+        // [Recording mod] capture the selection. Hooked at the [PunRPC] target
+        // so direct, RPC-wrapped, and bot-Random paths all route through here.
+        // Phase determination uses GameContext.TurnPhase from the global manager.
+        Digimon.Recording.GameRecorder.Instance?.LogSelectionInt(
+            playerID, value,
+            GManager.instance?.turnStateMachine?.gameContext?.TurnPhase.ToString() ?? "Unknown");
+
         selectionPlayer.QueuePlayerSelection(new ValueSelection(value));
     }
 
@@ -49,6 +56,11 @@ public class UserSelectionManager : MonoBehaviourPunCallbacks
         {
             return;
         }
+
+        // [Recording mod] capture bool selection (yes/no, optional triggers).
+        Digimon.Recording.GameRecorder.Instance?.LogSelectionBool(
+            playerID, value,
+            GManager.instance?.turnStateMachine?.gameContext?.TurnPhase.ToString() ?? "Unknown");
 
         selectionPlayer.QueuePlayerSelection(new ValueSelection(value));
     }
@@ -124,7 +136,7 @@ public class UserSelectionManager : MonoBehaviourPunCallbacks
         {
             GManager.instance.commandText.OpenCommandText(notSelectPlayerMessage);
 
-            #region AIÉÇÅ[Éh
+            #region AIÔøΩÔøΩÔøΩ[ÔøΩh
             if (GManager.instance.IsAI)
             {
                 List<int> canSelectValue = new List<int>();
@@ -178,7 +190,7 @@ public class UserSelectionManager : MonoBehaviourPunCallbacks
         {
             GManager.instance.commandText.OpenCommandText(notSelectPlayerMessage);
 
-            #region AIÉÇÅ[Éh
+            #region AIÔøΩÔøΩÔøΩ[ÔøΩh
             if (GManager.instance.IsAI)
             {
                 List<bool> canSelectValue = new List<bool>();
