@@ -349,6 +349,84 @@ public class TurnStateMachine : MonoBehaviourPunCallbacks
         //gameContext.TurnPlayer = GManager.instance.Opponent;
 #endif
 
+        // [Recording mod] start a new recording.
+        //
+        // Bot Match (IsAI): both decks are fully known on this client —
+        // populate `opp_deck_post_shuffle` from the opponent's
+        // LibraryCards (post-shuffle order).
+        //
+        // PvP (Random Match, Room Match): the opponent's post-shuffle
+        // order is NOT visible to this client (each client shuffles its
+        // local view of the opponent's deck independently — see
+        // `docs/superpowers/...` design.md §"DCGO PvP Information Model"
+        // and `CardObjectController.DeckRecipie`). But the opponent's
+        // decklist COMPOSITION is published to their Photon
+        // CustomProperties under "BattleDeckData" — we read it from
+        // there and emit `opp_decklist_composition` for the harness to
+        // construct opaque-deck games.
+        if (Digimon.Recording.GameRecorder.Instance != null)
+        {
+            var myDeck = new System.Collections.Generic.List<string>();
+            foreach (var c in gameContext.You.LibraryCards) myDeck.Add(c?.CardID ?? "");
+
+            System.Collections.Generic.List<string> oppDeck = null;
+            System.Collections.Generic.List<string> oppDecklistComposition = null;
+
+            if (GManager.instance.IsAI)
+            {
+                // Bot Match: full opponent deck observable.
+                oppDeck = new System.Collections.Generic.List<string>();
+                foreach (var c in gameContext.Opponent.LibraryCards)
+                    oppDeck.Add(c?.CardID ?? "");
+            }
+            else
+            {
+                // PvP: read opponent's decklist composition from their
+                // Photon CustomProperties. Source of truth for both clients.
+                // The opponent's `Photon.Realtime.Player` is reachable
+                // through `PhotonNetwork.PlayerListOthers` — but we don't
+                // have it on the Player.cs side; the simplest route is to
+                // pull the LocalPlayer's CustomProperties when self is
+                // gameContext.You, otherwise pull from the other Player.
+                // DCGO already does this in CardObjectController.DeckRecipie.
+                try
+                {
+                    var others = Photon.Pun.PhotonNetwork.PlayerListOthers;
+                    if (others != null && others.Length >= 1)
+                    {
+                        var props = others[0].CustomProperties;
+                        if (props != null && props.TryGetValue(
+                                ContinuousController.DeckDataPropertyKey,
+                                out object deckCode) && deckCode is string deckStr)
+                        {
+                            var deckData = new DeckData(deckStr);
+                            var entities = deckData.DeckCards();
+                            oppDecklistComposition = new System.Collections.Generic.List<string>();
+                            foreach (var entity in entities)
+                            {
+                                oppDecklistComposition.Add(entity?.CardID ?? "");
+                            }
+                        }
+                    }
+                }
+                catch (System.Exception e)
+                {
+                    UnityEngine.Debug.LogWarning(
+                        $"[GameRecorder] failed to read opponent's deck composition " +
+                        $"from CustomProperties: {e.Message}. PvP recording will lack " +
+                        $"opp_decklist_composition; the harness will fall back to " +
+                        $"deriving composition from the reveal stream.");
+                }
+            }
+
+            Digimon.Recording.GameRecorder.Instance.LogGameStart(
+                gameContext.You.PlayerID,
+                myDeck,
+                oppDeck,
+                GManager.instance.IsAI,
+                oppDecklistComposition);
+        }
+
         #region 先攻・後攻の決定
         if (gameContext.NonTurnPlayer.isYou)
         {
@@ -526,6 +604,11 @@ public class TurnStateMachine : MonoBehaviourPunCallbacks
         {
             return;
         }
+
+        // [Recording mod] capture the mulligan decision. Hooked here (the
+        // [PunRPC] target) so all three callers — direct, _RPC-wrapped, and
+        // the bot's RandomUtility path — funnel through one logging point.
+        Digimon.Recording.GameRecorder.Instance?.LogMulligan(playerID, isRedraw);
 
         selectionPlayer.QueuePlayerSelection(new ValueSelection(isRedraw));
     }
@@ -3029,6 +3112,12 @@ public class TurnStateMachine : MonoBehaviourPunCallbacks
     #region Queue Main Phase Action
     public void QueueMainPhaseAction(Player player, MainPhaseAction action)
     {
+        // [Recording mod] capture before RPC dispatch so both online and
+        // offline-bot paths route through the same logging chokepoint.
+        // The null-conditional access means the mod is a no-op when absent.
+        Digimon.Recording.GameRecorder.Instance?.LogAction(
+            player.PlayerID, action, gameContext?.TurnPhase.ToString() ?? "Unknown", player);
+
         photonView.RPC("QueueMainPhaseAction_Internal", RpcTarget.All, player.PlayerID, GamePacketFactory.GetId(action.GetType()), action.Serialize());
     }
 
@@ -3305,6 +3394,22 @@ public class TurnStateMachine : MonoBehaviourPunCallbacks
 
     public void EndGame(Player Winner, bool Surrendered, string effectName = "")
     {
+        // [Recording mod] close out the recording with winner + reason.
+        // Winner == null means draw or disconnect; -1 is the sentinel.
+        // Reason categories the replay harness expects: "concede" (Surrendered),
+        // "disconnect" (no winner + Photon room loss), "win" (effect-less natural
+        // win — typically security zero), or the effect name that ended the game.
+        if (Digimon.Recording.GameRecorder.Instance != null)
+        {
+            int winnerId = Winner != null ? Winner.PlayerID : -1;
+            string reason;
+            if (Surrendered) reason = "concede";
+            else if (Winner == null) reason = "disconnect";
+            else if (!string.IsNullOrEmpty(effectName)) reason = "effect:" + effectName;
+            else reason = "win";
+            Digimon.Recording.GameRecorder.Instance.LogGameEnd(winnerId, reason);
+        }
+
         foreach (GameObject gb in GManager.instance.CloseWhenEndingGameObjects)
         {
             if (gb != null)

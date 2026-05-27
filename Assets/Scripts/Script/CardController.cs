@@ -1954,6 +1954,19 @@ public class DrawClass
                 yield return ContinuousController.instance.StartCoroutine(CardObjectController.RemoveFromAllArea(DrawCard));
 
                 DrawCards.Add(DrawCard);
+
+                // [Recording mod] In PvP, the opponent's draws reveal a
+                // previously-hidden card from their opaque pile. Log it
+                // so the replay harness can feed it back into the engine's
+                // opaque RevealSource. We only log when the drawer is
+                // the opaque opponent (= not the local "You" player) AND
+                // we're in a PvP match (IsAI=false). The local player's
+                // draws are non-opaque and need no recording-side reveal.
+                if (!GManager.instance.IsAI && _player != GManager.instance.You)
+                {
+                    Digimon.Recording.GameRecorder.Instance?.LogReveal(
+                        _player.PlayerID, DrawCard.CardID, "draw");
+                }
             }
         }
 
@@ -2033,6 +2046,19 @@ public class IAddTrashCardsFromLibraryTop
                 discardedCards.Add(DiscardCard);
 
                 log += $"\n{DiscardCard.BaseENGCardNameFromEntity}({DiscardCard.CardID})";
+
+                // [Recording mod] In PvP, milling reveals an opaque-pile
+                // card's identity. Log it only when the milled-from player
+                // is the opaque opponent (not local "You") AND we're in PvP.
+                // Note: this trusts the local client's view of which card
+                // was at LibraryCards[i] — DCGO's per-client deck synchro
+                // is the source of truth for that view (see design.md
+                // §"DCGO PvP Information Model").
+                if (!GManager.instance.IsAI && _player != GManager.instance.You)
+                {
+                    Digimon.Recording.GameRecorder.Instance?.LogReveal(
+                        _player.PlayerID, DiscardCard.CardID, "mill");
+                }
             }
         }
 
@@ -3987,6 +4013,24 @@ public class ISecurityCheck
 
                         CardSource brokenSecurityCard = player.SecurityCards[0];
                         bool isFaceDown = brokenSecurityCard.IsFlipped;
+
+                        // [Recording mod] In PvP, the defending player's
+                        // security card becomes visible at flip-time. If
+                        // the defender is the opaque opponent (= not the
+                        // local "You" player) AND we're in PvP (IsAI=false),
+                        // log this as a `security` reveal so the replay
+                        // harness can feed it back. NOTE: the engine's
+                        // current opaque mode consumes security reveals
+                        // eagerly at game-start `setup_security_for_player`
+                        // — that's a mismatch the harness will need to
+                        // reconcile (lazy security reveal is a follow-up;
+                        // see design.md §"DCGO PvP Information Model"
+                        // and the limitation note in `opaque_deck` spec).
+                        if (!GManager.instance.IsAI && player != GManager.instance.You)
+                        {
+                            Digimon.Recording.GameRecorder.Instance?.LogReveal(
+                                player.PlayerID, brokenSecurityCard.CardID, "security");
+                        }
 
                         Hashtable hashtable = new Hashtable()
                             {
