@@ -142,9 +142,30 @@ namespace Digimon.Recording
                 && targetFrame < actor.fieldCardFrames.Count
                 && !actor.fieldCardFrames[targetFrame].IsEmptyFrame())
             {
+                // DCGO frame numbering: battle-area frames first (0..15),
+                // then ONE breeding frame with the last ID (see the Player
+                // fieldCardFrames constructor). The Rust action space has
+                // battle slots 0..13 and BREEDING_TARGET = 14 (space.rs).
+                int breedingFrameId = actor.fieldCardFrames.Count - 1;
+                int engineSlot;
+                if (targetFrame == breedingFrameId)
+                {
+                    engineSlot = 14; // ActionSpace BREEDING_TARGET
+                }
+                else if (targetFrame < 14)
+                {
+                    engineSlot = targetFrame;
+                }
+                else
+                {
+                    // DCGO battle slots 14/15 have no engine equivalent
+                    // (engine caps at 14 battle slots). Rare: 15th+ permanent.
+                    return Encoded.Fail("digivolve_frame_beyond_engine_slots",
+                                        rawDebug: $"handSlot={handSlot} frame={targetFrame}");
+                }
                 try
                 {
-                    return Encoded.Ok(ActionSpace.EncodeDigivolve(handSlot, targetFrame));
+                    return Encoded.Ok(ActionSpace.EncodeDigivolve(handSlot, engineSlot));
                 }
                 catch (System.ArgumentOutOfRangeException)
                 {
