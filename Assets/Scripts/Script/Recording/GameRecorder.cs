@@ -257,6 +257,19 @@ namespace Digimon.Recording
             EmitDecisionRow(actorPlayerId, encoded, phase: "Mulligan", source: "mulligan");
         }
 
+        /// <summary>
+        /// Log a breeding-phase decision (hatch / move / decline), already
+        /// resolved to its engine action ID by the caller
+        /// (<c>TurnStateMachine.SetBreedingPhase</c> — the single chokepoint
+        /// all human/auto/bot breeding decisions funnel through).
+        /// </summary>
+        public void LogBreedingAction(int actorPlayerId, ushort actionId, string phaseName)
+        {
+            if (!_gameInProgress) return;
+            EmitDecisionRow(actorPlayerId, ActionEncoder.Encoded.Ok(actionId),
+                            phaseName, source: "breeding");
+        }
+
         // ── Internals ─────────────────────────────────────────────────────
 
         private void EmitDecisionRow(int actor, ActionEncoder.Encoded encoded,

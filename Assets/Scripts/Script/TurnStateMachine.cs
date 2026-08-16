@@ -942,15 +942,28 @@ public class TurnStateMachine : MonoBehaviourPunCallbacks
             return;
         }
 
-        // [Recording mod] the AI calls this directly (its hatch decision never
-        // passes through SetBoolForPlayer, unlike the human path, whose bool
-        // selection is already logged there — hence the AI-seat-only guard to
-        // avoid double rows). Same row shape as the human's hatch selection.
-        if (GManager.instance.IsAI && GManager.instance.You != null
-            && playerID != GManager.instance.You.PlayerID)
+        // [Recording mod] this [PunRPC] is the single chokepoint for EVERY
+        // breeding decision — human click, human auto-hatch (autoHatch
+        // option), and the bot all funnel through SendShouldHatch → here.
+        // doBreeding=true means "perform the breeding action": hatch when
+        // possible, otherwise move to the battle area (see the breeding-phase
+        // region ~815). Resolve to the engine's action ID by the same state.
         {
-            Digimon.Recording.GameRecorder.Instance?.LogSelectionBool(
-                playerID, doBreeding,
+            ushort breedingActionId;
+            if (!doBreeding)
+            {
+                breedingActionId = Digimon.Recording.ActionSpace.PASS;
+            }
+            else if (selectionPlayer.CanHatch)
+            {
+                breedingActionId = Digimon.Recording.ActionSpace.HATCH;
+            }
+            else
+            {
+                breedingActionId = Digimon.Recording.ActionSpace.MOVE_FROM_BREEDING;
+            }
+            Digimon.Recording.GameRecorder.Instance?.LogBreedingAction(
+                playerID, breedingActionId,
                 gameContext?.TurnPhase.ToString() ?? "Breeding");
         }
 
