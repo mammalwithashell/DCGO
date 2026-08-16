@@ -112,7 +112,7 @@ namespace Digimon.Recording
                 _currentRecordingPath = Path.Combine(
                     Config.ResolvedOutputDirectory,
                     $"{timestamp}_{_gameId}.jsonl");
-                _writer = new StreamWriter(_currentRecordingPath, append: false, Encoding.UTF8);
+                _writer = new StreamWriter(_currentRecordingPath, append: false, new UTF8Encoding(false));
             }
             catch (Exception e)
             {
