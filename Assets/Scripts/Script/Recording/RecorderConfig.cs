@@ -51,6 +51,15 @@ namespace Digimon.Recording
         public int FlushEveryNRows { get; set; } = 16;
 
         /// <summary>
+        /// Upstream DCGO nulls the bot's attack decision in UNITY_EDITOR
+        /// builds, making the editor bot a pacifist. True (default) keeps
+        /// build parity so editor bot games exercise combat — required for a
+        /// meaningful recording corpus. Set false to restore the upstream
+        /// editor behaviour.
+        /// </summary>
+        public static bool KeepBotAttacksInEditor { get; set; } = true;
+
+        /// <summary>
         /// Cached default output directory (see <see cref="OutputDirectory"/>).
         /// </summary>
         public static string DefaultOutputDirectory =>

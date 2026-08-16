@@ -941,6 +941,18 @@ public class TurnStateMachine : MonoBehaviourPunCallbacks
             return;
         }
 
+        // [Recording mod] the AI calls this directly (its hatch decision never
+        // passes through SetBoolForPlayer, unlike the human path, whose bool
+        // selection is already logged there — hence the AI-seat-only guard to
+        // avoid double rows). Same row shape as the human's hatch selection.
+        if (GManager.instance.IsAI && GManager.instance.You != null
+            && playerID != GManager.instance.You.PlayerID)
+        {
+            Digimon.Recording.GameRecorder.Instance?.LogSelectionBool(
+                playerID, doBreeding,
+                gameContext?.TurnPhase.ToString() ?? "Breeding");
+        }
+
         selectionPlayer.QueuePlayerSelection(new ValueSelection(doBreeding));
     }
     #endregion
@@ -1146,7 +1158,15 @@ public class TurnStateMachine : MonoBehaviourPunCallbacks
                         }
 
 #if UNITY_EDITOR
-                        AttackingPermanent = null;
+                        // [Recording mod] Upstream zeroes the bot's attack
+                        // decision in editor builds (dev convenience). Default
+                        // to build-parity so editor bot games exercise combat;
+                        // flip KeepBotAttacksInEditor off to restore the
+                        // upstream pacifist bot.
+                        if (!Digimon.Recording.RecorderConfig.KeepBotAttacksInEditor)
+                        {
+                            AttackingPermanent = null;
+                        }
 #endif
 
                         if (AttackingPermanent == null)
@@ -1232,8 +1252,44 @@ public class TurnStateMachine : MonoBehaviourPunCallbacks
                         }
                     }
 
+                    // [Recording mod] The AI never routes through
+                    // QueueMainPhaseAction — it sets the decision fields
+                    // directly and the shared processing below consumes them.
+                    // Mirror each finalized decision into the recording as the
+                    // same MainPhaseAction object the human UI would have
+                    // queued, so both seats speak one action vocabulary.
+                    if (AttackingPermanent != null)
+                    {
+                        Digimon.Recording.GameRecorder.Instance?.LogAction(
+                            gameContext.TurnPlayer.PlayerID,
+                            new AttackPermanentAction(
+                                gameContext.TurnPlayer.GetFieldPermanents().IndexOf(AttackingPermanent),
+                                DefendingPermanent == null ? -1 : gameContext.NonTurnPlayer.GetFieldPermanents().IndexOf(DefendingPermanent)),
+                            gameContext.TurnPhase.ToString(),
+                            gameContext.TurnPlayer);
+                    }
+                    else if (PlayCard != null)
+                    {
+                        Digimon.Recording.GameRecorder.Instance?.LogAction(
+                            gameContext.TurnPlayer.PlayerID,
+                            new PlayCardAction(
+                                PlayCard.CardIndex,
+                                PlayCard.IsPermanent ? TargetFrameID : -1,
+                                new int[0], -1, new int[0]),
+                            gameContext.TurnPhase.ToString(),
+                            gameContext.TurnPlayer);
+                    }
+
                     if (PlayCard == null && UseCardEffect == null && UseCardEffect == null && AttackingPermanent == null)
                     {
+                        // [Recording mod] the AI's implicit end-of-turn is the
+                        // human path's explicit PassAction.
+                        Digimon.Recording.GameRecorder.Instance?.LogAction(
+                            gameContext.TurnPlayer.PlayerID,
+                            new PassAction(),
+                            gameContext.TurnPhase.ToString(),
+                            gameContext.TurnPlayer);
+
                         yield return ContinuousController.instance.StartCoroutine(GManager.instance.autoProcessing.EndTurnProcess());
                     }
                 }
