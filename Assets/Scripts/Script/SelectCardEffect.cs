@@ -847,6 +847,29 @@ public class SelectCardEffect : MonoBehaviourPunCallbacks
     [PunRPC]
     public void SetTargetCardAndIndicies(int playerID, int[] CardIDs, int[] Indicies)
     {
+        // [Recording mod] panel picks: card identities + display-order indexes.
+        // Empty/null = decline ("Not Select").
+        {
+            var __gc = GManager.instance?.turnStateMachine?.gameContext;
+            var __rec = Digimon.Recording.GameRecorder.Instance;
+            if (__gc != null && __rec != null)
+            {
+                if (CardIDs == null || CardIDs.Length == 0)
+                {
+                    __rec.LogSelectionRow(playerID, "SelectCardEffect", __gc.TurnPhase.ToString(), cancel: true);
+                }
+                else
+                {
+                    var __ids = new System.Collections.Generic.List<string>();
+                    foreach (int __ci in CardIDs)
+                        if (__ci >= 0 && __ci < __gc.ActiveCardList.Count)
+                            __ids.Add(__gc.ActiveCardList[__ci]?.CardID ?? "");
+                    __rec.LogSelectionRow(playerID, "SelectCardEffect", __gc.TurnPhase.ToString(),
+                        cardIds: __ids, indexes: Indicies);
+                }
+            }
+        }
+
         Player player = GManager.instance.GetPlayerFromID(playerID);
 
         if (!player)

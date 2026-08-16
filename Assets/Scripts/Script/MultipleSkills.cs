@@ -425,6 +425,10 @@ public class MultipleSkills : MonoBehaviourPunCallbacks
     [PunRPC]
     public void SetTargetSkill(int playerID, int skillIndex)
     {
+        // [Recording mod] trigger-order / multi-effect choice.
+        Digimon.Recording.GameRecorder.Instance?.LogSelectionRow(
+            playerID, "MultipleSkills", GManager.instance?.turnStateMachine?.gameContext?.TurnPhase.ToString() ?? "Unknown", intValue: skillIndex);
+
         Player selectionPlayer = GManager.instance.GetPlayerFromID(playerID);
 
         if (selectionPlayer == null)

@@ -424,7 +424,7 @@ namespace Digimon.Recording
         /// our action-space slot index (the stable FrameID, 0..13).
         /// </summary>
         /// <returns>Frame ID in [0, MAX_FIELD_SLOTS), or -1 if lookup fails.</returns>
-        private static int CompactIndexToFrameId(Player player, int compactIndex)
+        internal static int CompactIndexToFrameId(Player player, int compactIndex)
         {
             if (player == null) return -1;
             var perms = player.GetFieldPermanents();

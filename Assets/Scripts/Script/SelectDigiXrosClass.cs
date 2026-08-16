@@ -1024,6 +1024,10 @@ public class SelectDigiXrosClass : MonoBehaviourPunCallbacks
     [PunRPC]
     public void SetTargetDigiXrossIndex(int playerID, int targetIndex)
     {
+        // [Recording mod] zone choice: 0=Hand 1=Field 2=Trash 3=TamerSources 4=End.
+        Digimon.Recording.GameRecorder.Instance?.LogSelectionRow(
+            playerID, "SelectDigiXrosClass", GManager.instance?.turnStateMachine?.gameContext?.TurnPhase.ToString() ?? "Unknown", intValue: targetIndex);
+
         Player selectionPlayer = GManager.instance.GetPlayerFromID(playerID);
 
         if (selectionPlayer == null)

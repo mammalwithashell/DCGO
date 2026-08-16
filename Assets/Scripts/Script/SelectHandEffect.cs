@@ -763,6 +763,28 @@ public class SelectHandEffect : MonoBehaviourPunCallbacks
     [PunRPC]
     public void SetTargetHandCards(int playerID, int[] CardIDs)
     {
+        // [Recording mod] hand picks arrive as ActiveCardList indices; record
+        // card identities (order = selection order). null = decline.
+        {
+            var __gc = GManager.instance?.turnStateMachine?.gameContext;
+            var __rec = Digimon.Recording.GameRecorder.Instance;
+            if (__gc != null && __rec != null)
+            {
+                if (CardIDs == null)
+                {
+                    __rec.LogSelectionRow(playerID, "SelectHandEffect", __gc.TurnPhase.ToString(), cancel: true);
+                }
+                else
+                {
+                    var __ids = new System.Collections.Generic.List<string>();
+                    foreach (int __ci in CardIDs)
+                        if (__ci >= 0 && __ci < __gc.ActiveCardList.Count)
+                            __ids.Add(__gc.ActiveCardList[__ci]?.CardID ?? "");
+                    __rec.LogSelectionRow(playerID, "SelectHandEffect", __gc.TurnPhase.ToString(), cardIds: __ids);
+                }
+            }
+        }
+
         Player selectionPlayer = GManager.instance.GetPlayerFromID(playerID);
 
         if (selectionPlayer == null)

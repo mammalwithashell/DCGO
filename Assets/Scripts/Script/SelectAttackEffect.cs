@@ -553,6 +553,29 @@ public class SelectAttackEffect : MonoBehaviourPunCallbacks
     [PunRPC]
     public void SetAttackTarget(int playerID, bool isTurnPlayer, int permanentIndex)
     {
+        // [Recording mod] attack-target pick. -2 = decline, -1 = player/security
+        // (recorded as frame -1); otherwise compact index -> stable frame id.
+        {
+            var __gc = GManager.instance?.turnStateMachine?.gameContext;
+            var __rec = Digimon.Recording.GameRecorder.Instance;
+            if (__gc != null && __rec != null)
+            {
+                if (permanentIndex == -2)
+                {
+                    __rec.LogSelectionRow(playerID, "SelectAttackEffect", __gc.TurnPhase.ToString(), cancel: true);
+                }
+                else
+                {
+                    var __p = isTurnPlayer ? __gc.TurnPlayer : __gc.NonTurnPlayer;
+                    int __frame = permanentIndex < 0 ? -1
+                        : Digimon.Recording.ActionEncoder.CompactIndexToFrameId(__p, permanentIndex);
+                    __rec.LogSelectionRow(playerID, "SelectAttackEffect", __gc.TurnPhase.ToString(),
+                        targets: new System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<int, int>>
+                            { new System.Collections.Generic.KeyValuePair<int, int>(__p.PlayerID, __frame) });
+                }
+            }
+        }
+
         bool[] isTurnPlayerList = new bool[] { isTurnPlayer };
         int[] permanentIndexList = new int[] { permanentIndex };
 

@@ -270,6 +270,66 @@ namespace Digimon.Recording
                             phaseName, source: "breeding");
         }
 
+        /// <summary>
+        /// Log a selection answer with SEMANTIC payload (task 3.5). The Rust
+        /// harness resolves these against its live PendingSelection, where
+        /// candidate ordering and the action-id scheme are authoritative —
+        /// so this row carries absolute identities, not action IDs.
+        /// All payload arguments optional; pass only what the prompt knows.
+        /// `targets` are (absolutePlayerId, dcgoFrameId) pairs; frame -1
+        /// means "the player / security" (attack-target sentinel).
+        /// </summary>
+        public void LogSelectionRow(int actorPlayerId, string prompt, string phaseName,
+                                    IList<KeyValuePair<int, int>> targets = null,
+                                    IList<string> cardIds = null,
+                                    IList<int> indexes = null,
+                                    int? count = null,
+                                    long? intValue = null,
+                                    bool? boolValue = null,
+                                    bool cancel = false)
+        {
+            if (!_gameInProgress || _writer == null) return;
+            var sb = new StringBuilder(192);
+            sb.Append('{');
+            AppendKv(sb, "type", "selection");        sb.Append(',');
+            AppendKv(sb, "step", _stepIndex++);       sb.Append(',');
+            AppendKv(sb, "actor", actorPlayerId);     sb.Append(',');
+            AppendKv(sb, "prompt", prompt);           sb.Append(',');
+            AppendKv(sb, "phase", phaseName ?? "Unknown");
+            if (targets != null)
+            {
+                sb.Append(',').Append("\"targets\":[");
+                for (int i = 0; i < targets.Count; i++)
+                {
+                    if (i > 0) sb.Append(',');
+                    sb.Append("{\"player\":").Append(targets[i].Key)
+                      .Append(",\"frame\":").Append(targets[i].Value).Append('}');
+                }
+                sb.Append(']');
+            }
+            if (cardIds != null)
+            {
+                sb.Append(',');
+                AppendKvArray(sb, "card_ids", cardIds);
+            }
+            if (indexes != null)
+            {
+                sb.Append(',').Append("\"indexes\":[");
+                for (int i = 0; i < indexes.Count; i++)
+                {
+                    if (i > 0) sb.Append(',');
+                    sb.Append(indexes[i]);
+                }
+                sb.Append(']');
+            }
+            if (count.HasValue)     { sb.Append(','); AppendKv(sb, "count", count.Value); }
+            if (intValue.HasValue)  { sb.Append(',').Append("\"int_value\":").Append(intValue.Value); }
+            if (boolValue.HasValue) { sb.Append(','); AppendKv(sb, "bool_value", boolValue.Value); }
+            if (cancel)             { sb.Append(','); AppendKv(sb, "cancel", true); }
+            sb.Append('}');
+            WriteRow(sb.ToString());
+        }
+
         // ── Internals ─────────────────────────────────────────────────────
 
         private void EmitDecisionRow(int actor, ActionEncoder.Encoded encoded,

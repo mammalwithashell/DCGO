@@ -134,6 +134,10 @@ public class OptionalSkill : MonoBehaviourPunCallbacks
     [PunRPC]
     public void SetUseOptional(int playerID, bool useOptional)
     {
+        // [Recording mod] canonical optional-effect yes/no.
+        Digimon.Recording.GameRecorder.Instance?.LogSelectionRow(
+            playerID, "OptionalSkill", GManager.instance?.turnStateMachine?.gameContext?.TurnPhase.ToString() ?? "Unknown", boolValue: useOptional);
+
         Player selectionPlayer = GManager.instance.GetPlayerFromID(playerID);
 
         if (selectionPlayer == null)

@@ -188,6 +188,10 @@ public class SelectCountEffect : MonoBehaviourPunCallbacks
     [PunRPC]
     public void SetCount(int playerID, int selectedCount)
     {
+        // [Recording mod] count prompts carry the semantic number itself.
+        Digimon.Recording.GameRecorder.Instance?.LogSelectionRow(
+            playerID, "SelectCountEffect", GManager.instance?.turnStateMachine?.gameContext?.TurnPhase.ToString() ?? "Unknown", count: selectedCount);
+
         Player selectionPlayer = GManager.instance.GetPlayerFromID(playerID);
 
         if (selectionPlayer == null)
