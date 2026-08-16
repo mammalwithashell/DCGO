@@ -146,7 +146,7 @@ namespace Digimon.Recording
                 {
                     return Encoded.Ok(ActionSpace.EncodeDigivolve(handSlot, targetFrame));
                 }
-                catch (ArgumentOutOfRangeException)
+                catch (System.ArgumentOutOfRangeException)
                 {
                     return Encoded.Fail("digivolve_encode_out_of_range",
                                         rawDebug: $"handSlot={handSlot} frame={targetFrame}");
