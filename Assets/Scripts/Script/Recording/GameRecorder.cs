@@ -81,10 +81,18 @@ namespace Digimon.Recording
         /// players' decklists there during room setup. <c>null</c> for
         /// Bot Match (the opponent's deck IS observable, so
         /// <c>oppDeckCardIds</c> carries it instead).</param>
+        /// <param name="myEggDeck">Local player's post-shuffle digitama
+        /// (egg) deck order — index 0 is hatched first. <c>null</c> from
+        /// older callers (field then absent from the row).</param>
+        /// <param name="oppEggDeck">Opponent's post-shuffle digitama deck
+        /// order. Bot Match only; <c>null</c> for PvP (the opponent's
+        /// digitama order is not observable, same as their main deck).</param>
         public void LogGameStart(int myPlayerId, IList<string> myDeckCardIds,
                                  IList<string> oppDeckCardIds, bool isAi,
                                  IList<string> oppDecklistComposition = null,
-                                 int firstPlayerId = -1)
+                                 int firstPlayerId = -1,
+                                 IList<string> myEggDeck = null,
+                                 IList<string> oppEggDeck = null)
         {
             if (!Config.Enabled) return;
             if (isAi && !Config.RecordBotMatches) return;
@@ -152,6 +160,16 @@ namespace Digimon.Recording
             {
                 sb.Append(',');
                 AppendKvArray(sb, "opp_decklist_composition", oppDecklistComposition);
+            }
+            if (myEggDeck != null)
+            {
+                sb.Append(',');
+                AppendKvArray(sb, "my_egg_deck", myEggDeck);
+            }
+            if (oppEggDeck != null)
+            {
+                sb.Append(',');
+                AppendKvArray(sb, "opp_egg_deck", oppEggDeck);
             }
             sb.Append('}');
             WriteRow(sb.ToString());

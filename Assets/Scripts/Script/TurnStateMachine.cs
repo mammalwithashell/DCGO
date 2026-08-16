@@ -369,7 +369,16 @@ public class TurnStateMachine : MonoBehaviourPunCallbacks
             var myDeck = new System.Collections.Generic.List<string>();
             foreach (var c in gameContext.You.LibraryCards) myDeck.Add(c?.CardID ?? "");
 
+            // [Recording mod] Egg (digitama) decks. DigitamaLibraryCards is
+            // post-shuffle by StartGame time (shuffled at DeckRecipie via
+            // RandomUtility.ShuffledDeckCards(deckData.DigitamaDeckCards())),
+            // index 0 = first hatched. Same visibility split as the main
+            // deck: my side always; opponent side only in Bot Match.
+            var myEggDeck = new System.Collections.Generic.List<string>();
+            foreach (var c in gameContext.You.DigitamaLibraryCards) myEggDeck.Add(c?.CardID ?? "");
+
             System.Collections.Generic.List<string> oppDeck = null;
+            System.Collections.Generic.List<string> oppEggDeck = null;
             System.Collections.Generic.List<string> oppDecklistComposition = null;
 
             if (GManager.instance.IsAI)
@@ -378,6 +387,10 @@ public class TurnStateMachine : MonoBehaviourPunCallbacks
                 oppDeck = new System.Collections.Generic.List<string>();
                 foreach (var c in gameContext.Opponent.LibraryCards)
                     oppDeck.Add(c?.CardID ?? "");
+
+                oppEggDeck = new System.Collections.Generic.List<string>();
+                foreach (var c in gameContext.Opponent.DigitamaLibraryCards)
+                    oppEggDeck.Add(c?.CardID ?? "");
             }
             else
             {
@@ -425,7 +438,9 @@ public class TurnStateMachine : MonoBehaviourPunCallbacks
                 oppDeck,
                 GManager.instance.IsAI,
                 oppDecklistComposition,
-                gameContext.NonTurnPlayer.PlayerID);
+                gameContext.NonTurnPlayer.PlayerID,
+                myEggDeck,
+                oppEggDeck);
         }
 
         #region 先攻・後攻の決定
@@ -980,6 +995,22 @@ public class TurnStateMachine : MonoBehaviourPunCallbacks
     ICardEffect UseCardEffect { get; set; } = null;
     Permanent AttackingPermanent { get; set; } = null;
     Permanent DefendingPermanent { get; set; } = null;
+
+    // [Recording mod] Memo of the last AI decision mirrored into the
+    // recording. The mirror block in MainPhase() runs on every iteration
+    // of the wait-for-selection loop; a decision that persists across
+    // iterations before the shared processing consumes it would otherwise
+    // be logged once per iteration (observed: identical digivolve action
+    // logged twice in a row). Skip the log when the exact
+    // (AttackingPermanent, DefendingPermanent, PlayCard, TargetFrameID)
+    // tuple is unchanged since the last log; cleared whenever the
+    // decision fields themselves are reset (ResetMainPhaseParameter).
+    bool _recDecisionLogged = false;
+    Permanent _recLoggedAttacking = null;
+    Permanent _recLoggedDefending = null;
+    CardSource _recLoggedPlayCard = null;
+    int _recLoggedTargetFrameID = -1;
+
     float _timer = 0f;
     bool _canPlayEmptyFrame = true;
     bool[] _canPlayTargetFrames = new bool[GManager.instance.You.fieldCardFrames.Count];
@@ -1272,7 +1303,20 @@ public class TurnStateMachine : MonoBehaviourPunCallbacks
                     // Mirror each finalized decision into the recording as the
                     // same MainPhaseAction object the human UI would have
                     // queued, so both seats speak one action vocabulary.
-                    if (AttackingPermanent != null)
+                    //
+                    // Double-log guard: this mirror runs on every iteration of
+                    // the wait loop, so a decision that persists across
+                    // iterations before consumption must be logged only once —
+                    // skip when the exact decision tuple is unchanged since the
+                    // last log (memo cleared by ResetMainPhaseParameter when
+                    // the decision fields reset). Pass logs below need no memo:
+                    // EndTurnProcess consumes them immediately.
+                    bool recAlreadyLogged = _recDecisionLogged
+                        && object.ReferenceEquals(_recLoggedAttacking, AttackingPermanent)
+                        && object.ReferenceEquals(_recLoggedDefending, DefendingPermanent)
+                        && object.ReferenceEquals(_recLoggedPlayCard, PlayCard)
+                        && _recLoggedTargetFrameID == TargetFrameID;
+                    if (AttackingPermanent != null && !recAlreadyLogged)
                     {
                         Digimon.Recording.GameRecorder.Instance?.LogAction(
                             gameContext.TurnPlayer.PlayerID,
@@ -1281,8 +1325,13 @@ public class TurnStateMachine : MonoBehaviourPunCallbacks
                                 DefendingPermanent == null ? -1 : gameContext.NonTurnPlayer.GetFieldPermanents().IndexOf(DefendingPermanent)),
                             gameContext.TurnPhase.ToString(),
                             gameContext.TurnPlayer);
+                        _recDecisionLogged = true;
+                        _recLoggedAttacking = AttackingPermanent;
+                        _recLoggedDefending = DefendingPermanent;
+                        _recLoggedPlayCard = PlayCard;
+                        _recLoggedTargetFrameID = TargetFrameID;
                     }
-                    else if (PlayCard != null)
+                    else if (PlayCard != null && !recAlreadyLogged)
                     {
                         Digimon.Recording.GameRecorder.Instance?.LogAction(
                             gameContext.TurnPlayer.PlayerID,
@@ -1292,6 +1341,11 @@ public class TurnStateMachine : MonoBehaviourPunCallbacks
                                 new int[0], -1, new int[0]),
                             gameContext.TurnPhase.ToString(),
                             gameContext.TurnPlayer);
+                        _recDecisionLogged = true;
+                        _recLoggedAttacking = AttackingPermanent;
+                        _recLoggedDefending = DefendingPermanent;
+                        _recLoggedPlayCard = PlayCard;
+                        _recLoggedTargetFrameID = TargetFrameID;
                     }
 
                     if (PlayCard == null && UseCardEffect == null && UseCardEffect == null && AttackingPermanent == null)
@@ -1503,6 +1557,15 @@ public class TurnStateMachine : MonoBehaviourPunCallbacks
             UseCardEffect = null;
             AttackingPermanent = null;
             DefendingPermanent = null;
+
+            // [Recording mod] the decision fields were consumed/reset — a
+            // fresh (possibly identical) decision may now be logged again.
+            _recDecisionLogged = false;
+            _recLoggedAttacking = null;
+            _recLoggedDefending = null;
+            _recLoggedPlayCard = null;
+            _recLoggedTargetFrameID = -1;
+
             CardEffectCommons.ClearEffectLocations();
         }
         #endregion
