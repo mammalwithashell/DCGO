@@ -83,7 +83,8 @@ namespace Digimon.Recording
         /// <c>oppDeckCardIds</c> carries it instead).</param>
         public void LogGameStart(int myPlayerId, IList<string> myDeckCardIds,
                                  IList<string> oppDeckCardIds, bool isAi,
-                                 IList<string> oppDecklistComposition = null)
+                                 IList<string> oppDecklistComposition = null,
+                                 int firstPlayerId = -1)
         {
             if (!Config.Enabled) return;
             if (isAi && !Config.RecordBotMatches) return;
@@ -129,6 +130,14 @@ namespace Digimon.Recording
             AppendKv(sb, "game_id", _gameId);             sb.Append(',');
             AppendKv(sb, "timestamp", DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture)); sb.Append(',');
             AppendKv(sb, "my_player_id", myPlayerId);     sb.Append(',');
+            // Who takes turn 1. At StartGame time DCGO's gameContext has the
+            // first player as NonTurnPlayer (see 先攻・後攻の決定 region).
+            // -1 = unknown (older callers); harness falls back to inferring
+            // from the mulligan order.
+            if (firstPlayerId >= 0)
+            {
+                AppendKv(sb, "first_player", firstPlayerId); sb.Append(',');
+            }
             AppendKv(sb, "is_ai", isAi);                  sb.Append(',');
             AppendKvArray(sb, "my_deck_post_shuffle", myDeckCardIds); sb.Append(',');
             if (oppDeckCardIds == null)

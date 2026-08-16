@@ -87,7 +87,7 @@ namespace Digimon.Recording
             switch (action)
             {
                 case PlayCardAction play:
-                    return EncodePlayCard(play);
+                    return EncodePlayCard(play, actor);
                 case AttackPermanentAction atk:
                     return EncodeAttack(atk, actor);
                 case ActivatePermanentAction actPerm:
@@ -107,16 +107,53 @@ namespace Digimon.Recording
             }
         }
 
-        private static Encoded EncodePlayCard(PlayCardAction play)
+        private static Encoded EncodePlayCard(PlayCardAction play, Player actor)
         {
+            // PlayCardAction.CardIndex is an index into the per-game
+            // gameContext.ActiveCardList (player 1's deck occupies 0..49,
+            // player 2's 50..99) — NOT a hand slot. The Rust action space is
+            // keyed on hand position, so resolve the physical card to its
+            // current slot in the actor's hand. (CardSource.CardIndex is that
+            // same ActiveCardList index — see SetPlayCard.)
             int cardIndex = ReadField<int>(play, "CardIndex");
-            if (cardIndex < 0 || cardIndex >= ActionSpace.PLAY_HAND_END)
+            int handSlot = -1;
+            if (actor != null)
             {
-                return Encoded.Fail("play_card_hand_index_out_of_range",
-                                    rawDebug: cardIndex.ToString());
+                for (int i = 0; i < actor.HandCards.Count; i++)
+                {
+                    if (actor.HandCards[i].CardIndex == cardIndex)
+                    {
+                        handSlot = i;
+                        break;
+                    }
+                }
             }
-            // PLAY_HAND_START is 0, so the raw cardIndex IS the action ID.
-            return Encoded.Ok((ushort)(ActionSpace.PLAY_HAND_START + cardIndex));
+            if (handSlot < 0 || handSlot >= ActionSpace.PLAY_HAND_END)
+            {
+                return Encoded.Fail("play_card_not_in_actor_hand",
+                                    rawDebug: $"activeCardIndex={cardIndex} handSlot={handSlot}");
+            }
+
+            // A play onto an occupied frame is a digivolution in the Rust
+            // action space; onto an empty frame (or no frame — options) it is
+            // a base play.
+            int targetFrame = ReadField<int>(play, "TargetFrameID");
+            if (targetFrame >= 0 && actor != null
+                && targetFrame < actor.fieldCardFrames.Count
+                && !actor.fieldCardFrames[targetFrame].IsEmptyFrame())
+            {
+                try
+                {
+                    return Encoded.Ok(ActionSpace.EncodeDigivolve(handSlot, targetFrame));
+                }
+                catch (ArgumentOutOfRangeException)
+                {
+                    return Encoded.Fail("digivolve_encode_out_of_range",
+                                        rawDebug: $"handSlot={handSlot} frame={targetFrame}");
+                }
+            }
+
+            return Encoded.Ok((ushort)(ActionSpace.PLAY_HAND_START + handSlot));
         }
 
         private static Encoded EncodeAttack(AttackPermanentAction atk, Player actor)

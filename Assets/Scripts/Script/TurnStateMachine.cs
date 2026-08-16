@@ -424,7 +424,8 @@ public class TurnStateMachine : MonoBehaviourPunCallbacks
                 myDeck,
                 oppDeck,
                 GManager.instance.IsAI,
-                oppDecklistComposition);
+                oppDecklistComposition,
+                gameContext.NonTurnPlayer.PlayerID);
         }
 
         #region 先攻・後攻の決定
