@@ -60,6 +60,14 @@ namespace Digimon.Recording
         public static bool KeepBotAttacksInEditor { get; set; } = true;
 
         /// <summary>
+        /// Suppress the bot's mulligan (it redraws when it lacks a Level-3).
+        /// Redraw reshuffles use RNG the replay harness cannot reproduce, so
+        /// recorded games with a redraw cannot fully replay. Default true
+        /// while the recording campaign runs; set false for build parity.
+        /// </summary>
+        public static bool SuppressBotMulligan { get; set; } = true;
+
+        /// <summary>
         /// Cached default output directory (see <see cref="OutputDirectory"/>).
         /// </summary>
         public static string DefaultOutputDirectory =>

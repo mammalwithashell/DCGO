@@ -537,6 +537,14 @@ public class TurnStateMachine : MonoBehaviourPunCallbacks
                         doRedraw = true;
                     }
 
+                    // [Recording mod] redraws reshuffle with RNG the replay
+                    // harness cannot reproduce; suppress the bot's mulligan
+                    // while recording so games stay fully replayable.
+                    if (Digimon.Recording.RecorderConfig.SuppressBotMulligan)
+                    {
+                        doRedraw = false;
+                    }
+
                     SetRedraw(player.PlayerID, doRedraw);
                 }
                 #endregion
