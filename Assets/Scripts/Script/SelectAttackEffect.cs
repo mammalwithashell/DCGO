@@ -554,7 +554,8 @@ public class SelectAttackEffect : MonoBehaviourPunCallbacks
     public void SetAttackTarget(int playerID, bool isTurnPlayer, int permanentIndex)
     {
         // [Recording mod] attack-target pick. -2 = decline, -1 = player/security
-        // (recorded as frame -1); otherwise compact index -> stable frame id.
+        // (recorded as frame -1); otherwise the compact battle-area index,
+        // which is what our action space targets (see ActionEncoder.ValidateFieldSlot).
         {
             var __gc = GManager.instance?.turnStateMachine?.gameContext;
             var __rec = Digimon.Recording.GameRecorder.Instance;
@@ -568,7 +569,7 @@ public class SelectAttackEffect : MonoBehaviourPunCallbacks
                 {
                     var __p = isTurnPlayer ? __gc.TurnPlayer : __gc.NonTurnPlayer;
                     int __frame = permanentIndex < 0 ? -1
-                        : Digimon.Recording.ActionEncoder.CompactIndexToFrameId(__p, permanentIndex);
+                        : Digimon.Recording.ActionEncoder.ValidateFieldSlot(__p, permanentIndex);
                     __rec.LogSelectionRow(playerID, "SelectAttackEffect", __gc.TurnPhase.ToString(),
                         targets: new System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<int, int>>
                             { new System.Collections.Generic.KeyValuePair<int, int>(__p.PlayerID, __frame) });

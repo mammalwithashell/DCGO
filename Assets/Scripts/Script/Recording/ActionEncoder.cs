@@ -146,22 +146,30 @@ namespace Digimon.Recording
                 // then ONE breeding frame with the last ID (see the Player
                 // fieldCardFrames constructor). The Rust action space has
                 // battle slots 0..13 and BREEDING_TARGET = 14 (space.rs).
+                //
+                // NOTE the index-space shift: TargetFrameID is a SPARSE frame
+                // id (it indexes fieldCardFrames / FieldPermanents, which have
+                // null holes), whereas the engine's digivolve target is a
+                // COMPACT battle-area position. Passing the frame id through
+                // unchanged mis-targeted every battle-area digivolve whenever
+                // a lower frame was empty. Breeding is exempt — it is a single
+                // named slot on both sides.
                 int breedingFrameId = actor.fieldCardFrames.Count - 1;
                 int engineSlot;
                 if (targetFrame == breedingFrameId)
                 {
                     engineSlot = 14; // ActionSpace BREEDING_TARGET
                 }
-                else if (targetFrame < 14)
-                {
-                    engineSlot = targetFrame;
-                }
                 else
                 {
-                    // DCGO battle slots 14/15 have no engine equivalent
-                    // (engine caps at 14 battle slots). Rare: 15th+ permanent.
-                    return Encoded.Fail("digivolve_frame_beyond_engine_slots",
-                                        rawDebug: $"handSlot={handSlot} frame={targetFrame}");
+                    engineSlot = FrameIdToFieldSlot(actor, targetFrame);
+                    if (engineSlot < 0 || engineSlot >= ActionSpace.MAX_FIELD_SLOTS)
+                    {
+                        // More than 14 occupied battle slots has no engine
+                        // equivalent (engine caps at MAX_FIELD_SLOTS).
+                        return Encoded.Fail("digivolve_frame_beyond_engine_slots",
+                                            rawDebug: $"handSlot={handSlot} frame={targetFrame} slot={engineSlot}");
+                    }
                 }
                 try
                 {
@@ -182,11 +190,12 @@ namespace Digimon.Recording
             int attackerCompactIdx = ReadField<int>(atk, "PermanentIndex");
             int targetCompactIdx   = ReadField<int>(atk, "AttackTargetPermanentIndex");
 
-            // Translate DCGO compact index → frame ID. The Rust action space
+            // Both indices are already compact battle-area positions, which is
+            // exactly what the Rust action space targets. The Rust action space
             // is keyed on frame slot (0..13), not on the GetFieldPermanents
             // list position. AttackTargetPermanentIndex == -1 means "attack
             // security" — our SECURITY_TARGET (14) covers that.
-            int attackerFrame = CompactIndexToFrameId(actor, attackerCompactIdx);
+            int attackerFrame = ValidateFieldSlot(actor, attackerCompactIdx);
             if (attackerFrame < 0)
                 return Encoded.Fail("attack_attacker_frame_lookup_failed",
                                     rawDebug: attackerCompactIdx.ToString());
@@ -200,10 +209,10 @@ namespace Digimon.Recording
             {
                 // Attack target is one of the opponent's permanents (or own,
                 // in the rare case of self-targeted attacks). DCGO encodes
-                // target relative to the OPPONENT'S compact list — we need
-                // the enemy's frame.
+                // target relative to the OPPONENT'S compact list, which is
+                // the same index space our action-space target uses.
                 var enemy = actor.Enemy;
-                targetFrame = CompactIndexToFrameId(enemy, targetCompactIdx);
+                targetFrame = ValidateFieldSlot(enemy, targetCompactIdx);
                 if (targetFrame < 0)
                     return Encoded.Fail("attack_target_frame_lookup_failed",
                                         rawDebug: targetCompactIdx.ToString());
@@ -224,19 +233,38 @@ namespace Digimon.Recording
             int permCompactIdx = ReadField<int>(act, "PermanentIndex");
             int skillIdx       = ReadField<int>(act, "SkillIndex");
 
-            int frame = CompactIndexToFrameId(actor, permCompactIdx);
-            if (frame < 0)
+            int slot = ValidateFieldSlot(actor, permCompactIdx);
+            if (slot < 0)
                 return Encoded.Fail("activate_permanent_frame_lookup_failed",
                                     rawDebug: permCompactIdx.ToString());
 
-            if (frame >= ActionSpace.MAX_FIELD_SLOTS ||
-                skillIdx < 0 || skillIdx >= ActionSpace.EFFECTS_PER_PERMANENT)
+            if (slot >= ActionSpace.MAX_FIELD_SLOTS)
             {
                 return Encoded.Fail("activate_permanent_out_of_range",
-                                    rawDebug: $"frame={frame} skill={skillIdx}");
+                                    rawDebug: $"slot={slot} skill={skillIdx}");
             }
 
-            return Encoded.Ok(ActionSpace.EncodeFieldEffect(frame, skillIdx));
+            // DCGO's SkillIndex is POSITIONAL — an index into the permanent's
+            // `EffectList(EffectTiming.OnDeclaration)` (see
+            // TurnStateMachine.SetActSkill). Our per-permanent effect sub-slots
+            // are SEMANTIC: 0 = Overclock (EndOfTurnAction phase), 2 = the
+            // [Main] activated ability, 3 = DigiLink activate. Writing DCGO's
+            // positional index straight into the sub-slot encoded a main-phase
+            // activation as an Overclock, which the engine's mask never offers.
+            //
+            // This hook fires from QueueMainPhaseAction, so the activation is a
+            // [Main] ability by construction → sub-slot FIELD_EFFECT_SLOT_FOR_MAIN.
+            if (skillIdx != 0)
+            {
+                // Our action space reserves exactly one [Main] sub-slot per
+                // permanent, so a card with two+ activated [Main] abilities is
+                // not addressable. Fail loudly rather than mis-label it.
+                return Encoded.Fail("activate_permanent_nonzero_skill_index",
+                                    rawDebug: $"slot={slot} skill={skillIdx}");
+            }
+
+            return Encoded.Ok(
+                ActionSpace.EncodeFieldEffect(slot, ActionSpace.FIELD_EFFECT_SLOT_FOR_MAIN));
         }
 
         private static Encoded EncodeActivateCard(ActivateCardAction act)
@@ -419,30 +447,76 @@ namespace Digimon.Recording
         // ── Helpers ───────────────────────────────────────────────────────
 
         /// <summary>
-        /// Translate DCGO's <c>PermanentIndex</c> (index into the compact
-        /// non-empty list returned by <c>Player.GetFieldPermanents()</c>) into
-        /// our action-space slot index (the stable FrameID, 0..13).
+        /// Bounds-check DCGO's <c>PermanentIndex</c> and return it unchanged.
+        ///
+        /// DCGO addresses board positions two different ways, and only one of
+        /// them matches our action space:
+        ///   - <c>Player.FieldPermanents</c> is a SPARSE array indexed by
+        ///     <c>FieldCardFrame.FrameID</c> (the on-screen slot; empty frames
+        ///     are null holes).
+        ///   - <c>Player.GetFieldPermanents()</c> returns the COMPACT list of
+        ///     non-null permanents in ascending frame order.
+        ///
+        /// Every gameplay packet we encode — <c>AttackPermanentAction</c>,
+        /// <c>ActivatePermanentAction</c>, and the <c>SelectPermanentEffect</c>
+        /// / <c>SelectAttackEffect</c> pickers — carries the COMPACT index
+        /// (confirmed in <c>TurnStateMachine.SetActSkill</c> and
+        /// <c>SetAttackingPermaent</c>, both of which index
+        /// <c>GetFieldPermanents()</c> directly).
+        ///
+        /// Our action space also indexes the compact battle area (engine
+        /// <c>Player.battle_area</c> is a packed Vec, and ATTACK / FIELD_EFFECT
+        /// / selection targets are all positions within it). So the correct
+        /// translation is the identity — this helper exists only to validate
+        /// the range. An earlier version converted compact → FrameID, which
+        /// silently emitted UI slot numbers (e.g. frame 4 for the sole
+        /// permanent at battle-area index 0) and made every board reference in
+        /// a recording unreplayable.
+        ///
+        /// Residual fidelity caveat: DCGO compacts by ascending FrameID while
+        /// the engine's battle_area is in play order. Those agree whenever
+        /// permanents are placed left-to-right, but a player who drops a card
+        /// into a higher frame first can reorder the two lists. Such a game
+        /// surfaces as an illegal_action / wrong-target divergence rather than
+        /// silently mis-replaying.
         /// </summary>
-        /// <returns>Frame ID in [0, MAX_FIELD_SLOTS), or -1 if lookup fails.</returns>
-        internal static int CompactIndexToFrameId(Player player, int compactIndex)
+        /// <returns>The compact index, or -1 if out of range.</returns>
+        internal static int ValidateFieldSlot(Player player, int compactIndex)
         {
             if (player == null) return -1;
             var perms = player.GetFieldPermanents();
             if (compactIndex < 0 || compactIndex >= perms.Count) return -1;
+            return compactIndex;
+        }
 
-            var perm = perms[compactIndex];
-            // Permanent.PermanentFrame is the FieldCardFrame this permanent
-            // currently sits on; .FrameID is the stable slot index.
-            // (See DCGO/Assets/Scripts/Script/Permanent.cs and FieldCardFrame.)
-            try
+        /// <summary>
+        /// Convert a SPARSE DCGO <c>FieldCardFrame.FrameID</c> into the COMPACT
+        /// battle-area position our action space uses — the inverse direction
+        /// from <see cref="ValidateFieldSlot"/>.
+        ///
+        /// Needed for packets that carry a frame id rather than a compact index:
+        /// <c>PlayCardAction.TargetFrameID</c> (the digivolve target) is the
+        /// frame the card was dropped onto. Since <c>GetFieldPermanents()</c>
+        /// compacts <c>FieldPermanents</c> in ascending frame order, the compact
+        /// position is simply the count of occupied frames below this one.
+        /// </summary>
+        /// <returns>Compact battle-area index, or -1 if the frame is empty or
+        /// out of range.</returns>
+        internal static int FrameIdToFieldSlot(Player player, int frameId)
+        {
+            if (player == null || player.FieldPermanents == null) return -1;
+            if (frameId < 0 || frameId >= player.FieldPermanents.Length) return -1;
+
+            var occupant = player.FieldPermanents[frameId];
+            if (occupant == null || occupant.TopCard == null) return -1;
+
+            int slot = 0;
+            for (int i = 0; i < frameId; i++)
             {
-                var frame = perm.PermanentFrame;
-                return frame != null ? frame.FrameID : -1;
+                var p = player.FieldPermanents[i];
+                if (p != null && p.TopCard != null) slot++;
             }
-            catch
-            {
-                return -1;
-            }
+            return slot;
         }
 
         /// <summary>

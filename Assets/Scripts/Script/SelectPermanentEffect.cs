@@ -1043,8 +1043,9 @@ public class SelectPermanentEffect : MonoBehaviourPunCallbacks
     public void SetTargetFrames(int playerID, bool[] isTurnPlayer, int[] UnitIndex)
     {
         // [Recording mod] permanent picks: (null,null) = cancel; empty = zero-pick
-        // confirm; else compact indexes -> stable frame ids (turn-relative bit ->
-        // absolute player id).
+        // confirm; else compact battle-area indexes, which is what our action
+        // space targets (see ActionEncoder.ValidateFieldSlot). The turn-relative
+        // bit is resolved to an absolute player id.
         {
             var __gc = GManager.instance?.turnStateMachine?.gameContext;
             var __rec = Digimon.Recording.GameRecorder.Instance;
@@ -1060,7 +1061,7 @@ public class SelectPermanentEffect : MonoBehaviourPunCallbacks
                     for (int __i = 0; __i < UnitIndex.Length && __i < isTurnPlayer.Length; __i++)
                     {
                         var __p = isTurnPlayer[__i] ? __gc.TurnPlayer : __gc.NonTurnPlayer;
-                        int __frame = Digimon.Recording.ActionEncoder.CompactIndexToFrameId(__p, UnitIndex[__i]);
+                        int __frame = Digimon.Recording.ActionEncoder.ValidateFieldSlot(__p, UnitIndex[__i]);
                         __targets.Add(new System.Collections.Generic.KeyValuePair<int, int>(__p.PlayerID, __frame));
                     }
                     __rec.LogSelectionRow(playerID, "SelectPermanentEffect", __gc.TurnPhase.ToString(), targets: __targets);
