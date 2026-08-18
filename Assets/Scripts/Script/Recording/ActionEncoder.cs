@@ -481,6 +481,30 @@ namespace Digimon.Recording
         /// silently mis-replaying.
         /// </summary>
         /// <returns>The compact index, or -1 if out of range.</returns>
+        /// <summary>
+        /// Snapshot a player's battle area as card IDs, in the same compact
+        /// order every board operand in a recording indexes
+        /// (<c>GetFieldPermanents()</c>).
+        ///
+        /// The replay harness needs this because DCGO's compact order is
+        /// derived from on-screen frame position, and permanents migrate
+        /// between frames at runtime (<c>PreferredFrame</c>), while the Rust
+        /// engine's battle area is in play order. Slot N therefore means
+        /// different permanents on the two sides. Recording the identities
+        /// lets the harness rebuild the mapping instead of assuming the
+        /// orders agree.
+        /// </summary>
+        internal static List<string> BattleAreaCardIds(Player player)
+        {
+            var ids = new List<string>();
+            if (player == null) return ids;
+            foreach (var perm in player.GetFieldPermanents())
+            {
+                ids.Add(perm?.TopCard?.CardID ?? "");
+            }
+            return ids;
+        }
+
         internal static int ValidateFieldSlot(Player player, int compactIndex)
         {
             if (player == null) return -1;

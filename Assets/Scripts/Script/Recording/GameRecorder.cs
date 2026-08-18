@@ -344,6 +344,7 @@ namespace Digimon.Recording
             if (intValue.HasValue)  { sb.Append(',').Append("\"int_value\":").Append(intValue.Value); }
             if (boolValue.HasValue) { sb.Append(','); AppendKv(sb, "bool_value", boolValue.Value); }
             if (cancel)             { sb.Append(','); AppendKv(sb, "cancel", true); }
+            AppendBoards(sb);
             sb.Append('}');
             WriteRow(sb.ToString());
         }
@@ -373,10 +374,44 @@ namespace Digimon.Recording
                 AppendKv(sb, "action_id", encoded.ActionId);     sb.Append(',');
                 AppendKv(sb, "phase", phase ?? "");               sb.Append(',');
                 AppendKv(sb, "source", source);
+                AppendBoards(sb);
             }
             sb.Append('}');
             WriteRow(sb.ToString());
             _stepIndex++;
+        }
+
+        /// <summary>
+        /// Append <c>board_p0</c> / <c>board_p1</c> — both players' battle
+        /// areas as card IDs, in the compact order this row's board operands
+        /// index.
+        ///
+        /// DCGO's compact order follows on-screen frame position and
+        /// permanents migrate between frames at runtime, while the Rust
+        /// engine's battle area is in play order, so slot N means different
+        /// permanents on the two sides. Recording the identities lets the
+        /// replay harness rebuild the mapping rather than assume the orders
+        /// agree (they routinely do not).
+        ///
+        /// No-op when the game context is unavailable, so rows stay
+        /// well-formed outside a live game.
+        /// </summary>
+        private void AppendBoards(StringBuilder sb)
+        {
+            var gc = GManager.instance?.turnStateMachine?.gameContext;
+            if (gc == null) return;
+
+            for (int pid = 0; pid <= 1; pid++)
+            {
+                Player p = null;
+                if (gc.TurnPlayer != null && gc.TurnPlayer.PlayerID == pid) p = gc.TurnPlayer;
+                else if (gc.NonTurnPlayer != null && gc.NonTurnPlayer.PlayerID == pid) p = gc.NonTurnPlayer;
+                if (p == null) continue;
+
+                sb.Append(',');
+                AppendKvArray(sb, pid == 0 ? "board_p0" : "board_p1",
+                              ActionEncoder.BattleAreaCardIds(p));
+            }
         }
 
         private void WriteRow(string json)
