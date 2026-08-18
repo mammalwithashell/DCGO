@@ -17,12 +17,28 @@ namespace Digimon.Harness
         /// </summary>
         public static bool Enabled { get; set; } = false;
 
+        private static string _root;
+
         /// <summary>
         /// Harness root holding jobs/ claimed/ done/ failed/. Defaults beside
         /// the recorder's output so both live under persistentDataPath.
         /// </summary>
-        public static string Root { get; set; } =
-            Path.Combine(Application.persistentDataPath, "dcgo_harness");
+        /// <remarks>
+        /// The default is computed on read rather than baked into a static
+        /// initializer, mirroring <c>RecorderConfig.DefaultOutputDirectory</c>.
+        /// Unity restricts when <see cref="Application.persistentDataPath"/> may
+        /// be touched, and a static initializer runs at whatever arbitrary moment
+        /// the type is first used — which for this class is a
+        /// [RuntimeInitializeOnLoadMethod] bootstrap. Reading it lazily keeps the
+        /// call inside a normal frame instead.
+        /// </remarks>
+        public static string Root
+        {
+            get => string.IsNullOrEmpty(_root)
+                ? Path.Combine(Application.persistentDataPath, "dcgo_harness")
+                : _root;
+            set => _root = value;
+        }
 
         /// <summary>
         /// Time multiplier while a job runs. A corpus of hundreds of games is
