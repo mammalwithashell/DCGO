@@ -12,6 +12,13 @@ using DG.Tweening;
 //Card-related operations
 public class CardObjectController : MonoBehaviour
 {
+    /// <summary>
+    /// [Harness mod] When set, these replace the normal deck sources so an
+    /// unattended job fully specifies both seats. Null in normal play.
+    /// </summary>
+    public static DeckData HarnessDeckOverrideP0 = null;
+    public static DeckData HarnessDeckOverrideP1 = null;
+
     #region Generate cards for each player's deck
     public static IEnumerator CreatePlayerDecks(CardSource CardPrefab, GameContext gameContext)
     {
@@ -129,6 +136,14 @@ public class CardObjectController : MonoBehaviour
         #region そのPhotonクライアントのメインデッキレシピ
         List<CEntity_Base> DeckRecipie(Photon.Realtime.Player player)
         {
+            // [Harness mod] A job specifies both decks outright; short-circuit the
+            // BattleDeckData / RandomDeck selection entirely.
+            if (HarnessDeckOverrideP0 != null && HarnessDeckOverrideP1 != null)
+            {
+                DeckData chosen = (player == MasterPlayer) ? HarnessDeckOverrideP0 : HarnessDeckOverrideP1;
+                return RandomUtility.ShuffledDeckCards(chosen.DeckCards());
+            }
+
             #region 対人戦
             if (!GManager.instance.IsAI)
             {
@@ -215,6 +230,14 @@ public class CardObjectController : MonoBehaviour
         #region そのPhotonクライアントのデジタマデッキレシピ
         List<CEntity_Base> DigitamaDeckRecipie(Photon.Realtime.Player player)
         {
+            // [Harness mod] A job specifies both decks outright; short-circuit the
+            // BattleDeckData / RandomDeck selection entirely.
+            if (HarnessDeckOverrideP0 != null && HarnessDeckOverrideP1 != null)
+            {
+                DeckData chosen = (player == MasterPlayer) ? HarnessDeckOverrideP0 : HarnessDeckOverrideP1;
+                return RandomUtility.ShuffledDeckCards(chosen.DigitamaDeckCards());
+            }
+
             #region 対人戦
             if (!GManager.instance.IsAI)
             {
