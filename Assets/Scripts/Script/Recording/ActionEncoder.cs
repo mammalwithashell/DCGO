@@ -498,7 +498,14 @@ namespace Digimon.Recording
         {
             var ids = new List<string>();
             if (player == null) return ids;
-            foreach (var perm in player.GetFieldPermanents())
+            // GetBattleAreaPermanents, NOT GetFieldPermanents: the latter walks
+            // every frame including the BREEDING one, so a hatched egg or a
+            // digivolving stack showed up in the snapshot as though it were on
+            // the battle field. The engine's battle_area holds no such thing, so
+            // the two lists described different zones -- benign only because
+            // DCGO orders the breeding frame last, which kept battle-area
+            // indices aligned by luck rather than by construction.
+            foreach (var perm in player.GetBattleAreaPermanents())
             {
                 ids.Add(perm?.TopCard?.CardID ?? "");
             }
