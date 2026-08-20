@@ -10,7 +10,14 @@ public static class IEnumerableExtension
     #region Get random element from list
     public static IEnumerable<T> GetRandom<T>(this IEnumerable<T> list, int count)
     {
-        var random = new System.Random();
+        // [Harness mod] Was `new System.Random()`, which .NET seeds from
+        // Environment.TickCount -- i.e. wall-clock time, entirely outside
+        // GameRandom's seeded stream. The AI's card/hand/permanent selections
+        // all route through here (SelectCardEffect, SelectHandEffect,
+        // SelectPermanentEffect), so two runs of the same seeded game shuffled
+        // identical decks and then had the bot pick differently. Drawing from
+        // GameRandom, which DCGO already treats as THE game randomness source,
+        // makes a seeded game reproducible end to end.
 
         var indexList = new List<int>();
         for (int i = 0; i < list.ToList().Count; i++)
@@ -20,7 +27,7 @@ public static class IEnumerableExtension
 
         for (int i = 0; i < count; i++)
         {
-            int index = random.Next(0, indexList.Count);
+            int index = GameRandom.Range(0, indexList.Count);
             int value = indexList[index];
             indexList.RemoveAt(index);
             yield return list.ToList()[value];
