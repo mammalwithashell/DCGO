@@ -660,6 +660,16 @@ public class TurnStateMachine : MonoBehaviourPunCallbacks
     #region Active Phase
     IEnumerator ActivePhase()
     {
+        // [Harness mod] turn-cap check; no-op outside a harness job.
+        // ActivePhase runs once per iteration of GameStateMachine's turn
+        // loop (see the `while (true) { ... yield return StartCoroutine(
+        // ActivePhase()); ... }` there), so this fires exactly once per
+        // turn, for whichever player is about to act.
+        if (Digimon.Harness.JobWatcher.Instance != null)
+        {
+            Digimon.Harness.JobWatcher.Instance.NotifyTurnStarted();
+        }
+
         gameContext.TurnPlayer.SetTurnStartTime();
 
         foreach (Permanent permanent in gameContext.TurnPlayer.GetFieldPermanents())
@@ -3633,7 +3643,15 @@ public class TurnStateMachine : MonoBehaviourPunCallbacks
 
         ContinuousController.instance.StartCoroutine(GManager.instance.BattleBGM.FadeOut(1));
 
-        if (GManager.instance.isAuto && GManager.instance.IsAI)
+        // [Harness mod] Under the job harness, file the result first; the
+        // JobWatcher poll loop then claims the next job and loads the scene
+        // itself. Plain auto mode (no harness) keeps the blind reload.
+        if (Digimon.Harness.JobWatcher.Instance != null
+            && Digimon.Harness.JobWatcher.Instance.CurrentJob != null)
+        {
+            Digimon.Harness.JobResultWriter.FileResult("completed", 0, "");
+        }
+        else if (GManager.instance.isAuto && GManager.instance.IsAI)
         {
             ContinuousController.instance.isAI = true;
             UnityEngine.SceneManagement.SceneManager.LoadScene("BattleScene");

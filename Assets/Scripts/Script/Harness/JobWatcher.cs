@@ -24,6 +24,12 @@ namespace Digimon.Harness
 
         public DateTime StartedUtc { get; private set; }
 
+        // [Harness mod] Turns seen by the CURRENT job, reset on every claim.
+        // Enforces limits.max_turns (Step 4) so a bot that loops forever
+        // (our own engine hit exactly this class of bug -- the CannotAttack
+        // mask loop) hangs a single job instead of the whole batch.
+        private int _turnsSeen;
+
         // [Harness mod - D2] Edge-trigger for ClearOverrides: true once ApplyJob
         // has installed the harness overrides (deck overrides / isAI /
         // timeScale) for the CURRENT claim attempt, false once ClearOverrides
@@ -133,6 +139,9 @@ namespace Digimon.Harness
             CurrentJob = job;
             ClaimedPath = claimed;
             StartedUtc = DateTime.UtcNow;
+            // [Harness mod] Reset the turn-cap counter for the job just
+            // claimed; NotifyTurnStarted counts against this job only.
+            _turnsSeen = 0;
             Debug.Log("[Harness] started job " + job.job_id);
 
             // Same handoff the auto-mode restart uses.
@@ -237,9 +246,43 @@ namespace Digimon.Harness
             {
                 Debug.LogError("[Harness] could not file failure: " + e.Message);
             }
+            // [Harness mod] Now shares the release step with the success path
+            // (JobResultWriter.FileResult) instead of duplicating the two
+            // field clears inline.
+            ClearCurrentJob();
+            ClearOverrides();
+        }
+
+        /// <summary>Release the current job so the poll loop claims the next one.</summary>
+        // [Harness mod] The success-path counterpart to Fail's job release.
+        // Called from JobResultWriter.FileResult after a completed/partial
+        // result is filed. Before this method existed CurrentJob was cleared
+        // ONLY inside Fail; PollLoop only calls TryClaimAndStart when
+        // CurrentJob == null, so a job that actually finished (rather than
+        // failing) left CurrentJob set forever and the harness stalled after
+        // exactly one game.
+        public void ClearCurrentJob()
+        {
             CurrentJob = null;
             ClaimedPath = null;
-            ClearOverrides();
+        }
+
+        /// <summary>
+        /// Called at the start of each turn. Abandons the job past its turn cap,
+        /// filing a "partial" result -- the truncated recording is still a valid
+        /// parity input, and an abandoned game beats a hung batch.
+        /// </summary>
+        public void NotifyTurnStarted()
+        {
+            if (CurrentJob == null) return;
+            _turnsSeen++;
+            if (_turnsSeen <= CurrentJob.limits.max_turns) return;
+
+            Debug.LogWarning("[Harness] job " + CurrentJob.job_id + " hit the turn cap; abandoning");
+            JobResultWriter.FileResult("partial", _turnsSeen, "exceeded max_turns");
+            _turnsSeen = 0;
+            // Reloading kills the running game; the poll loop claims the next job.
+            SceneManager.LoadScene("BattleScene");
         }
 
         /// <summary>

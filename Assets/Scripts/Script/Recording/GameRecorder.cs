@@ -38,6 +38,13 @@ namespace Digimon.Recording
 
         public RecorderConfig Config { get; private set; } = new RecorderConfig();
 
+        // [Harness mod] Path of the JSONL file for the game in progress, or ""
+        // when idle. JobResultWriter.FileResult reads this to fill the
+        // result sidecar's recording_path so the Rust replay/parity tooling
+        // can find the recording a given job produced.
+        /// <summary>Path of the JSONL file for the game in progress, or "" when idle.</summary>
+        public string CurrentRecordingPath { get; private set; } = "";
+
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
         private static void Bootstrap()
         {
@@ -112,6 +119,15 @@ namespace Digimon.Recording
             _stepIndex = 0;
             _rowsSinceFlush = 0;
             _gameInProgress = true;
+            // [Harness mod] Reset before attempting to open this game's file.
+            // Left as-is (NOT cleared) across LogGameEnd/CloseCurrentRecording
+            // for the game that just finished -- JobResultWriter.FileResult
+            // reads it AFTER LogGameEnd but BEFORE this method runs again for
+            // the next job, so the just-completed path must still be visible
+            // then. Clearing it here, right before the next attempt, is what
+            // stops a later job from reporting a stale (previous game's) path
+            // if ITS OWN file then fails to open below.
+            CurrentRecordingPath = "";
 
             try
             {
@@ -122,6 +138,9 @@ namespace Digimon.Recording
                     Config.ResolvedOutputDirectory,
                     $"{timestamp}_{_gameId}.jsonl");
                 _writer = new StreamWriter(_currentRecordingPath, append: false, new UTF8Encoding(false));
+                // [Harness mod] Only publish the path once the writer has
+                // actually opened -- see the reset comment above.
+                CurrentRecordingPath = _currentRecordingPath;
             }
             catch (Exception e)
             {
