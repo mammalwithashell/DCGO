@@ -233,6 +233,15 @@ namespace Digimon.Harness
             CardObjectController.HarnessDeckOverrideP0 = null;
             CardObjectController.HarnessDeckOverrideP1 = null;
             Time.timeScale = 1f;
+
+            // isAI is what makes GManager treat the session as a bot game, and
+            // it lives on the DontDestroyOnLoad ContinuousController, so it
+            // outlives the batch too. Leaving it set pushes the user's next
+            // hand-started game into auto mode.
+            if (ContinuousController.instance != null)
+            {
+                ContinuousController.instance.isAI = false;
+            }
         }
 
         private static string SafeRead(string path)
