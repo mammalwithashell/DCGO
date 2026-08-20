@@ -120,7 +120,12 @@ public class UserSelectionManager : MonoBehaviourPunCallbacks
         _selectPlayer = selectPlayer;
         _isLocal = IsLocal;
 
-        if (selectPlayer.isYou)
+        // [Harness mod] This is DCGO's GENERIC int/bool prompt -- the channel
+        // every "you may X" and multi-choice question funnels through. Under
+        // auto mode the local seat is bot-driven, so routing it to the human
+        // command-button path opens a prompt nothing will ever click. The else
+        // branch below is the AI's auto-answer.
+        if (selectPlayer.isYou && !Digimon.Harness.HarnessAuto.DrivesLocalSeat)
         {
             GManager.instance.commandText.OpenCommandText(selectPlayerMessage);
 
@@ -174,7 +179,12 @@ public class UserSelectionManager : MonoBehaviourPunCallbacks
         _selectPlayer = selectPlayer;
         _isLocal = IsLocal;
 
-        if (selectPlayer.isYou)
+        // [Harness mod] This is DCGO's GENERIC int/bool prompt -- the channel
+        // every "you may X" and multi-choice question funnels through. Under
+        // auto mode the local seat is bot-driven, so routing it to the human
+        // command-button path opens a prompt nothing will ever click. The else
+        // branch below is the AI's auto-answer.
+        if (selectPlayer.isYou && !Digimon.Harness.HarnessAuto.DrivesLocalSeat)
         {
             GManager.instance.commandText.OpenCommandText(selectPlayerMessage);
 
