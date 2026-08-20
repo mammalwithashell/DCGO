@@ -3646,9 +3646,19 @@ public class TurnStateMachine : MonoBehaviourPunCallbacks
 
         GManager.instance.LoadingObject.gameObject.SetActive(false);
 
-        GManager.instance.resultObject.ShowResult(Winner, Surrendered, effectName);
+        // [Harness mod] Skip the result screen under the harness. An unattended
+        // batch has nobody to read it, and in this checkout
+        // resultObject.transform.GetChild(3) throws a NullReferenceException
+        // (AssetRipper-extracted prefab). That abort happened BEFORE the
+        // StopAllCoroutines calls below, so the finished game's coroutines kept
+        // running into the next job's scene load and it hung on "Now Loading".
+        // Normal human play is untouched.
+        if (!harnessHandledEnd)
+        {
+            GManager.instance.resultObject.ShowResult(Winner, Surrendered, effectName);
 
-        EventSystem.current.SetSelectedGameObject(GManager.instance.resultObject.transform.GetChild(3).gameObject);
+            EventSystem.current.SetSelectedGameObject(GManager.instance.resultObject.transform.GetChild(3).gameObject);
+        }
 
         GManager.instance.commandText.CloseCommandText();
 
