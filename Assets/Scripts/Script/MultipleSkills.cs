@@ -186,7 +186,11 @@ public class MultipleSkills : MonoBehaviourPunCallbacks
                     // Blast Digivolution
                     if (IsOnlyHandEffectStacked && IsOnlyOptionalEffectStacked && IsEachStackedEffectHasDistinctSourceCard)
                     {
-                        if (player.isYou)
+                        // [Harness mod] Auto mode drives both seats now; without
+                        // this, the local seat's effect-order prompt would open
+                        // UI and wait for a click that never comes. Route it to
+                        // the AI branch below.
+                        if (player.isYou && !Digimon.Harness.HarnessAuto.DrivesLocalSeat)
                         {
                             int skillIndex = 0;
 
@@ -263,7 +267,11 @@ public class MultipleSkills : MonoBehaviourPunCallbacks
 
                     else
                     {
-                        if (player.isYou)
+                        // [Harness mod] Auto mode drives both seats now; without
+                        // this, the local seat's effect-order prompt would open
+                        // UI and wait for a click that never comes. Route it to
+                        // the AI branch below.
+                        if (player.isYou && !Digimon.Harness.HarnessAuto.DrivesLocalSeat)
                         {
                             int skillIndex = -1;
 

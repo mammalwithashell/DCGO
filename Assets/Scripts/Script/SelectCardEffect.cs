@@ -377,7 +377,10 @@ public class SelectCardEffect : MonoBehaviourPunCallbacks
                 GManager.instance.turnStateMachine.gameContext.IsSecurityLooking = true;
             }
 
-            if (_selectPlayer.isYou)
+            // [Harness mod] Auto mode drives both seats now; without this,
+            // the local seat's card-selection prompt would open UI and wait
+            // for a click that never comes. Route it to the AI branch below.
+            if (_selectPlayer.isYou && !Digimon.Harness.HarnessAuto.DrivesLocalSeat)
             {
                 if ((_isDeckBottom && ContinuousController.instance.autoDeckBottomOrder)
                 || (_isDeckTop && ContinuousController.instance.autoDeckTopOrder))

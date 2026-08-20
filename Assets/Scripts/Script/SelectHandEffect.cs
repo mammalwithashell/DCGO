@@ -183,7 +183,10 @@ public class SelectHandEffect : MonoBehaviourPunCallbacks
                 GManager.instance.turnStateMachine.OffHandCardTarget(player);
             }
 
-            if (_selectPlayer.isYou)
+            // [Harness mod] Auto mode drives both seats now; without this,
+            // the local seat's hand-selection prompt would open UI and wait
+            // for a click that never comes. Route it to the AI branch below.
+            if (_selectPlayer.isYou && !Digimon.Harness.HarnessAuto.DrivesLocalSeat)
             {
                 GManager.instance.sideBar.SetUpSideBar();
 

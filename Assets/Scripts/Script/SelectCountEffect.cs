@@ -113,7 +113,11 @@ public class SelectCountEffect : MonoBehaviourPunCallbacks
 
                 else
                 {
-                    if (_selectPlayer.isYou)
+                    // [Harness mod] Auto mode drives both seats now; without
+                    // this, the local seat's count-selection prompt would open
+                    // UI and wait for a click that never comes. Route it to the
+                    // AI branch below.
+                    if (_selectPlayer.isYou && !Digimon.Harness.HarnessAuto.DrivesLocalSeat)
                     {
                         if ((!_isDigivolutionCost && ContinuousController.instance.autoMaxCardCount && !_preferMin)
                         || (_isDigivolutionCost && ContinuousController.instance.autoMinDigivolutionCost && _preferMin))

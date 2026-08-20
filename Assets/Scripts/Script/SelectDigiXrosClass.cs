@@ -477,7 +477,11 @@ public class SelectDigiXrosClass : MonoBehaviourPunCallbacks
 
                     else
                     {
-                        if (card.Owner.isYou)
+                        // [Harness mod] Auto mode drives both seats now; without
+                        // this, the local seat's DigiXros-area prompt would open
+                        // UI and wait for a click that never comes. Route it to
+                        // the AI branch below.
+                        if (card.Owner.isYou && !Digimon.Harness.HarnessAuto.DrivesLocalSeat)
                         {
                             GManager.instance.commandText.OpenCommandText($"From which area will you select {element.selectMessage}?", digiXros: true);
 
@@ -559,7 +563,10 @@ public class SelectDigiXrosClass : MonoBehaviourPunCallbacks
                             break;//Perform here where the value will only just have been set by the above routine
                         }
 
-                        if (!card.Owner.isYou && GManager.instance.IsAI)
+                        // [Harness mod] Widen the existing AI-pacing delay so it
+                        // also applies when the local seat is AI-driven under
+                        // auto mode, matching the opponent-seat pacing above.
+                        if ((!card.Owner.isYou || Digimon.Harness.HarnessAuto.DrivesLocalSeat) && GManager.instance.IsAI)
                         {
                             yield return _waitForSeconds0_3;
                         }

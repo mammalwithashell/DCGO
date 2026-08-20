@@ -57,7 +57,10 @@ public class OptionalSkill : MonoBehaviourPunCallbacks
         }
         #endregion
 
-        if (cardEffect.EffectSourceCard.Owner.isYou)
+        // [Harness mod] Auto mode drives both seats now; without this, the
+        // local seat's optional-skill Yes/No prompt would open UI and wait
+        // for a click that never comes. Route it to the AI branch below.
+        if (cardEffect.EffectSourceCard.Owner.isYou && !Digimon.Harness.HarnessAuto.DrivesLocalSeat)
         {
             Permanent permanent = cardEffect.EffectSourceCard.PermanentOfThisCard();
             List<FieldPermanentCard> highlightPermanents = new List<FieldPermanentCard>();

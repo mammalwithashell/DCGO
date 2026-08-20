@@ -227,7 +227,11 @@ public class SelectAttackEffect : MonoBehaviourPunCallbacks
                 {
                     if (_attacker.CanAttack(_cardEffect, _withoutTap, _isVortex))
                     {
-                        if (_attacker.TopCard.Owner.isYou)
+                        // [Harness mod] Auto mode drives both seats now; without
+                        // this, the local seat's attack-target prompt would open
+                        // UI and wait for a click that never comes. Route it to
+                        // the AI branch below.
+                        if (_attacker.TopCard.Owner.isYou && !Digimon.Harness.HarnessAuto.DrivesLocalSeat)
                         {
                             #region Select Attack Target
                             if (!string.IsNullOrEmpty(_customMessage))
