@@ -65,11 +65,36 @@ namespace Digimon.Harness
             StartCoroutine(PollLoop());
         }
 
+        /// <summary>
+        /// True once DCGO has finished loading the card database a job needs to
+        /// resolve its decks.
+        /// </summary>
+        /// <remarks>
+        /// [Harness mod] Bootstrap runs at BeforeSceneLoad, roughly a second
+        /// ahead of ContinuousController.Init() populating SortedCardList. A
+        /// poll inside that window claims a job, fails deck resolution, and
+        /// files it to failed/ -- burning real jobs on a startup race rather
+        /// than on anything wrong with them. Gate claiming on readiness instead.
+        /// </remarks>
+        private static bool DcgoReady =>
+            ContinuousController.instance != null
+            && ContinuousController.instance.SortedCardList != null
+            && ContinuousController.instance.SortedCardList.Length > 0;
+
         private IEnumerator PollLoop()
         {
+            // Announce the wait once, so a slow start is distinguishable from a
+            // harness that is simply not working.
+            if (!DcgoReady)
+            {
+                Debug.Log("[Harness] waiting for DCGO to finish loading its card database...");
+                yield return new WaitWhile(() => !DcgoReady);
+                Debug.Log("[Harness] card database ready; claiming jobs.");
+            }
+
             while (true)
             {
-                if (CurrentJob == null)
+                if (CurrentJob == null && DcgoReady)
                 {
                     TryClaimAndStart();
                 }
