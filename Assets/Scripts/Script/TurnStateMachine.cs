@@ -893,7 +893,19 @@ public class TurnStateMachine : MonoBehaviourPunCallbacks
 
                 if (gameContext.TurnPlayer.isYou && GManager.instance.isAuto && GManager.instance.IsAI)
                 {
-                    gameContext.TurnPhase = GameContext.phase.Main;
+                    // [Harness mod] Upstream auto mode skipped the local seat's
+                    // breeding entirely (jumped straight to Main), so P0 never
+                    // hatched and never moved from the breeding area. Run the
+                    // same decision the opponent seat uses so the recording
+                    // corpus covers breeding for both players.
+                    bool doHatch = RandomUtility.IsSucceedProbability(0.85f);
+
+                    if (gameContext.TurnPlayer.CanHatch)
+                    {
+                        doHatch = true;
+                    }
+
+                    SetBreedingPhase(gameContext.TurnPlayer.PlayerID, doHatch);
                 }
             }
 
