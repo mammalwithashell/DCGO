@@ -15,7 +15,35 @@ namespace Digimon.Harness
         /// behaves exactly as upstream. Default OFF so a normal play session is
         /// never hijacked by a stale job file.
         /// </summary>
-        public static bool Enabled { get; set; } = false;
+        private static bool _enabled;
+
+        /// <summary>Backing key shared with the Editor menu toggle.</summary>
+        public const string EnabledPrefKey = "Digimon.Harness.Enabled";
+
+        public static bool Enabled
+        {
+            get
+            {
+#if UNITY_EDITOR
+                // Read the operator's choice straight from EditorPrefs rather
+                // than trusting a static field. Entering Play mode triggers a
+                // domain reload that wipes all static state, so a value set by
+                // the menu beforehand is gone by the time the runtime bootstrap
+                // reads it -- the harness would silently do nothing. EditorPrefs
+                // survives the reload, so there is no ordering dependency at all.
+                return UnityEditor.EditorPrefs.GetBool(EnabledPrefKey, false);
+#else
+                return _enabled;
+#endif
+            }
+            set
+            {
+                _enabled = value;
+#if UNITY_EDITOR
+                UnityEditor.EditorPrefs.SetBool(EnabledPrefKey, value);
+#endif
+            }
+        }
 
         private static string _root;
 
