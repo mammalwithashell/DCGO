@@ -3592,6 +3592,21 @@ public class TurnStateMachine : MonoBehaviourPunCallbacks
             Digimon.Recording.GameRecorder.Instance.LogGameEnd(winnerId, reason);
         }
 
+        // [Harness mod] File the job result HERE, immediately after the game is
+        // known to be over -- not after the UI teardown below. Everything
+        // between this point and the end of the method is presentation
+        // (result panel, EventSystem selection, coroutine shutdown), and any of
+        // it throwing would skip result-filing entirely, stranding the job in
+        // claimed/ and stalling the whole batch. The harness does not care
+        // whether the result screen rendered.
+        bool harnessHandledEnd = false;
+        if (Digimon.Harness.JobWatcher.Instance != null
+            && Digimon.Harness.JobWatcher.Instance.CurrentJob != null)
+        {
+            Digimon.Harness.JobResultWriter.FileResult("completed", 0, "");
+            harnessHandledEnd = true;
+        }
+
         foreach (GameObject gb in GManager.instance.CloseWhenEndingGameObjects)
         {
             if (gb != null)
@@ -3643,15 +3658,12 @@ public class TurnStateMachine : MonoBehaviourPunCallbacks
 
         ContinuousController.instance.StartCoroutine(GManager.instance.BattleBGM.FadeOut(1));
 
-        // [Harness mod] Under the job harness, file the result first; the
-        // JobWatcher poll loop then claims the next job and loads the scene
-        // itself. Plain auto mode (no harness) keeps the blind reload.
-        if (Digimon.Harness.JobWatcher.Instance != null
-            && Digimon.Harness.JobWatcher.Instance.CurrentJob != null)
-        {
-            Digimon.Harness.JobResultWriter.FileResult("completed", 0, "");
-        }
-        else if (GManager.instance.isAuto && GManager.instance.IsAI)
+        // [Harness mod] The harness already filed its result above and its poll
+        // loop will claim the next job and load the scene itself. Suppress the
+        // blind reload in that case -- FileResult clears CurrentJob, so without
+        // this flag the condition below would be true again and start an
+        // unmanaged game racing the next job.
+        if (!harnessHandledEnd && GManager.instance.isAuto && GManager.instance.IsAI)
         {
             ContinuousController.instance.isAI = true;
             UnityEngine.SceneManagement.SceneManager.LoadScene("BattleScene");
