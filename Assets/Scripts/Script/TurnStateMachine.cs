@@ -225,7 +225,26 @@ public class TurnStateMachine : MonoBehaviourPunCallbacks
         #region 乱数列初期化
         if (PhotonNetwork.IsMasterClient)
         {
-            ContinuousController.instance.GetComponent<PhotonView>().RPC("SetRandom", RpcTarget.All, RandomUtility.GetSecureRandom());
+            // [Harness mod] A harness job must be reproducible from its spec, so
+            // the game's RNG stream comes from the job seed rather than OS
+            // entropy. This is the authoritative seeding point: it runs after
+            // JobWatcher.ApplyJob and immediately before the deck shuffle and
+            // first-player roll, so seeding anywhere earlier is overwritten here.
+            // AI mode still creates and joins a (MaxPlayers = 1) Photon room (see
+            // the "AIモード" region above), so the harness client IS the master
+            // client here and this branch always fires for a harness job.
+            long seed = (Digimon.Harness.JobWatcher.Instance != null
+                         && Digimon.Harness.JobWatcher.Instance.CurrentJob != null)
+                ? Digimon.Harness.JobWatcher.Instance.CurrentJob.seed
+                : RandomUtility.GetSecureRandom();
+
+            ContinuousController.instance.GetComponent<PhotonView>().RPC("SetRandom", RpcTarget.All, seed);
+
+            if (Digimon.Harness.JobWatcher.Instance != null && Digimon.Harness.JobWatcher.Instance.CurrentJob != null)
+            {
+                Debug.Log("[Harness] job " + Digimon.Harness.JobWatcher.Instance.CurrentJob.job_id
+                    + " handshake seeded GameRandom with seed=" + seed);
+            }
         }
 
         yield return new WaitWhile(() => !ContinuousController.instance.DoneSetRandom);

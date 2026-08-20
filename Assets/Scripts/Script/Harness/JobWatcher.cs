@@ -24,6 +24,13 @@ namespace Digimon.Harness
 
         public DateTime StartedUtc { get; private set; }
 
+        // [Harness mod - D2] Edge-trigger for ClearOverrides: true once ApplyJob
+        // has installed the harness overrides (deck overrides / isAI /
+        // timeScale) for the CURRENT claim attempt, false once ClearOverrides
+        // has released them. See ClearOverrides for why this can't be a plain
+        // "clear every idle poll" call.
+        private static bool _overridesApplied;
+
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
         private static void Bootstrap()
         {
@@ -144,6 +151,14 @@ namespace Digimon.Harness
 
             CardObjectController.HarnessDeckOverrideP0 = p0;
             CardObjectController.HarnessDeckOverrideP1 = p1;
+            // [Harness mod - D2] Mark overrides as installed for this claim
+            // attempt (deck overrides above; isAI / Time.timeScale below) so
+            // ClearOverrides knows there is something to release. Set as soon
+            // as the first override is written, not at the end of ApplyJob,
+            // so a later exception mid-ApplyJob (routed to Fail -> Clear
+            // Overrides by the caller) still results in a real clear instead
+            // of a no-op that would leave these overrides stuck on.
+            _overridesApplied = true;
             // [Harness mod - I3] Deliberately NOT setting
             // ContinuousController.instance.BattleDeckData = p0 here. Its
             // setter also writes LastBattleDeckData (see ContinuousController
@@ -180,19 +195,30 @@ namespace Digimon.Harness
             // (deck shuffling via RandomUtility.ShuffledDeckCards, bot
             // decision rolls via RandomUtility.IsSucceedProbability) draws
             // from GameRandom (Xoshiro256**), NOT UnityEngine.Random.
-            // GameRandom.Seed is the only seeding entry point and it is
-            // otherwise seeded once from OS entropy in
-            // ContinuousController.Init() -- nothing re-seeds it between here
-            // and the deck shuffle, so without this call no job is
-            // reproducible from its seed. GameRandom.Seed takes a `long`
-            // directly, so job.seed needs no truncation.
+            // GameRandom.Seed takes a `long` directly, so job.seed needs no
+            // truncation.
+            //
+            // [Harness mod - D1] This is belt-and-braces only, NOT the
+            // authoritative seed: TurnStateMachine.Init re-seeds GameRandom
+            // from OS entropy on every game via the "乱数列初期化" RPC
+            // handshake (SetRandom -> SetRandomCoroutine -> GameRandom.Seed),
+            // which runs after LoadScene("BattleScene") and immediately
+            // before the deck shuffle -- overwriting whatever is set here.
+            // That handshake now sources its seed from
+            // JobWatcher.Instance.CurrentJob.seed when a job is active (see
+            // TurnStateMachine.cs), which is what actually makes a job
+            // reproducible. This call is kept in case some future codepath
+            // reads GameRandom before the handshake fires.
             GameRandom.Seed(job.seed);
             // UnityEngine.Random.InitState is kept as a secondary seed for
             // the handful of non-game-critical paths (VFX, camera shake,
             // etc.) that still pull from UnityEngine.Random. It is NOT what a
             // seed-replay determinism check depends on -- GameRandom is.
             UnityEngine.Random.InitState(unchecked((int)job.seed));
-            Debug.Log("[Harness] job " + job.job_id + " seeded GameRandom with seed=" + job.seed);
+            // [Harness mod - D1] "early-seeded": see the belt-and-braces note
+            // above -- the TurnStateMachine handshake log is the one that
+            // confirms the seed actually used for the shuffle.
+            Debug.Log("[Harness] job " + job.job_id + " early-seeded GameRandom with seed=" + job.seed);
 
             Time.timeScale = HarnessConfig.TimeScale;
             return true;
@@ -227,9 +253,27 @@ namespace Digimon.Harness
         /// Time.timeScale stays at 8 for the rest of the process, for any
         /// game the user starts by hand after the batch drains. Called both
         /// on job failure and when a poll finds the queue empty while idle.
+        ///
+        /// [Harness mod - D2] The idle-poll call site (TryClaimAndStart, once
+        /// per PollSeconds -- 1s -- whenever the job queue is empty, which is
+        /// the normal state between batches and effectively all the time
+        /// otherwise) used to run this unconditionally on every single poll.
+        /// SelectBattleMode.StartSelectBattleDeck sets isAI = true for a
+        /// human-started vs-AI game and then spends several seconds in deck
+        /// selection / a loading coroutine before BattleScene loads; an idle
+        /// poll landing in that window silently flipped isAI back to false
+        /// and stomped Time.timeScale, hanging the human's game. Guarding on
+        /// _overridesApplied makes this edge-triggered: it now does real work
+        /// exactly once per job (success or failure), immediately after
+        /// ApplyJob installed the overrides, and is a no-op every other poll
+        /// -- including every idle poll where no harness job is in flight, so
+        /// it can no longer race a human-started game.
         /// </remarks>
         private static void ClearOverrides()
         {
+            if (!_overridesApplied) return;
+            _overridesApplied = false;
+
             CardObjectController.HarnessDeckOverrideP0 = null;
             CardObjectController.HarnessDeckOverrideP1 = null;
             Time.timeScale = 1f;
