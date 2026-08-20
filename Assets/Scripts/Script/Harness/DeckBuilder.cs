@@ -66,12 +66,15 @@ namespace Digimon.Harness
             }
 
             string code = DeckData.GetDeckCode(deckName, main, digitama, null);
-            if (!DeckData.IsValidDeckCode(code))
-            {
-                Debug.LogError("[Harness] deck '" + deckName + "' produced an invalid deck code");
-                return null;
-            }
 
+            // Deliberately NOT gated on DeckData.IsValidDeckCode. That validator
+            // requires Split(',') to yield 5 or 6 fields, but GetDeckCode emits
+            // "name,ids,counts,eggIds,eggCounts,keycard," -- six commas, so seven
+            // fields -- and is therefore rejected by it. DCGO never notices
+            // because IsValidDeckCode has no other caller in the codebase; it
+            // only ever validated hand-pasted codes from an older format. The
+            // DeckData(string) constructor reads fields positionally and ignores
+            // the trailing empty one, so the code parses correctly.
             DeckData deck = new DeckData(code);
 
             // [Harness mod - I5] IsValidDeckCode only checks structural shape
@@ -84,7 +87,9 @@ namespace Digimon.Harness
             // instead of landing in failed/.
             if (!deck.IsValidDeckData())
             {
-                Debug.LogError("[Harness] deck '" + deckName + "' failed deck legality check (IsValidDeckData: needs exactly 50 main-deck cards, <=5 egg)");
+                Debug.LogError("[Harness] deck '" + deckName + "' failed legality: resolved "
+                               + main.Count + " main + " + digitama.Count
+                               + " egg (IsValidDeckData needs exactly 50 main, <=5 egg, all standard-legal)");
                 return null;
             }
 
