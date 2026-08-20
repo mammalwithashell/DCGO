@@ -321,6 +321,7 @@ namespace Digimon.Recording
                                     IList<string> cardIds = null,
                                     IList<int> indexes = null,
                                     int? count = null,
+                                    IList<int> candidates = null,
                                     long? intValue = null,
                                     bool? boolValue = null,
                                     bool cancel = false)
@@ -360,6 +361,16 @@ namespace Digimon.Recording
                 sb.Append(']');
             }
             if (count.HasValue)     { sb.Append(','); AppendKv(sb, "count", count.Value); }
+            if (candidates != null && candidates.Count > 0)
+            {
+                sb.Append(',').Append("\"candidates\":[");
+                for (int i = 0; i < candidates.Count; i++)
+                {
+                    if (i > 0) sb.Append(',');
+                    sb.Append(candidates[i]);
+                }
+                sb.Append(']');
+            }
             if (intValue.HasValue)  { sb.Append(',').Append("\"int_value\":").Append(intValue.Value); }
             if (boolValue.HasValue) { sb.Append(','); AppendKv(sb, "bool_value", boolValue.Value); }
             if (cancel)             { sb.Append(','); AppendKv(sb, "cancel", true); }

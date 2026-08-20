@@ -54,6 +54,9 @@ public class SelectCountEffect : MonoBehaviourPunCallbacks
     Func<int, IEnumerator> _selectCountCoroutine = null;
     List<int> _candidates = new List<int>();
     int _selectedCount = 0;
+
+    // [Recording mod] see the assignment in Activate().
+    List<int> _lastCandidates = new List<int>();
     bool _preferMin = true;
     bool _isDigivolutionCost = false;
 
@@ -103,6 +106,14 @@ public class SelectCountEffect : MonoBehaviourPunCallbacks
             }
 
             candidates = candidates.Distinct().OrderBy((value) => value).ToList();
+
+            // [Recording mod] Stash the resolved candidate set. SetCount only
+            // receives the chosen VALUE (a cost, a card count), and a value is
+            // meaningless to the replay harness without the options it was
+            // chosen from -- our engine models these as an indexed branch list,
+            // so the harness needs the index, which only the candidate set can
+            // supply.
+            _lastCandidates = new List<int>(candidates);
 
             if (candidates.Count >= 1)
             {
@@ -192,9 +203,12 @@ public class SelectCountEffect : MonoBehaviourPunCallbacks
     [PunRPC]
     public void SetCount(int playerID, int selectedCount)
     {
-        // [Recording mod] count prompts carry the semantic number itself.
+        // [Recording mod] Count prompts carry the semantic number itself, plus
+        // the candidate set it was chosen from -- the value alone cannot be
+        // mapped onto our engine's indexed branch list.
         Digimon.Recording.GameRecorder.Instance?.LogSelectionRow(
-            playerID, "SelectCountEffect", GManager.instance?.turnStateMachine?.gameContext?.TurnPhase.ToString() ?? "Unknown", count: selectedCount);
+            playerID, "SelectCountEffect", GManager.instance?.turnStateMachine?.gameContext?.TurnPhase.ToString() ?? "Unknown",
+            count: selectedCount, candidates: _lastCandidates);
 
         Player selectionPlayer = GManager.instance.GetPlayerFromID(playerID);
 
