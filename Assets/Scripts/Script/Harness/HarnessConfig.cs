@@ -20,10 +20,30 @@ namespace Digimon.Harness
         /// <summary>Backing key shared with the Editor menu toggle.</summary>
         public const string EnabledPrefKey = "Digimon.Harness.Enabled";
 
+        /// <summary>
+        /// Presence of this file enables the harness. Created/removed by
+        /// `dcgo-harness enable` / `disable`.
+        /// </summary>
+        public static string EnabledMarkerPath => Path.Combine(Root, "harness.enabled");
+
         public static bool Enabled
         {
             get
             {
+                // A marker file in the harness root is the primary switch. It
+                // needs no Editor code, works in a player build, and is set by
+                // the same CLI that queues the jobs -- so enabling cannot depend
+                // on a Unity menu registering correctly. Still explicit: an
+                // operator has to run `dcgo-harness enable`, so a stale job file
+                // alone can never hijack a normal play session.
+                try
+                {
+                    if (File.Exists(EnabledMarkerPath)) return true;
+                }
+                catch (System.Exception)
+                {
+                    // An unreadable root is not a reason to start a batch.
+                }
 #if UNITY_EDITOR
                 // Read the operator's choice straight from EditorPrefs rather
                 // than trusting a static field. Entering Play mode triggers a
