@@ -40,6 +40,14 @@ namespace Digimon.Harness
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
         private static void Bootstrap()
         {
+            // Always announce, even when disabled. A harness that is off looks
+            // exactly like a harness that is broken -- Play starts, nothing
+            // happens, no message. One line here turns "it just sat there" into
+            // a self-diagnosing state, and names the root so the Unity side and
+            // the CLI side can be checked for agreement at a glance.
+            Debug.Log("[Harness] bootstrap: enabled=" + HarnessConfig.Enabled
+                      + " root=" + HarnessConfig.Root);
+
             if (!HarnessConfig.Enabled) return;
             if (Instance != null) return;
 
