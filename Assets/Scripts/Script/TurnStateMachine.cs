@@ -1181,7 +1181,24 @@ public class TurnStateMachine : MonoBehaviourPunCallbacks
                 }
 
                 #region AIモード
-                if (GManager.instance.IsAI && !gameContext.TurnPlayer.isYou)
+                // [Harness mod] Upstream gates the entire AI main-phase brain --
+                // attack selection, card play, and the pass -- on the turn player
+                // NOT being the local seat. Under auto mode the local seat fell
+                // to the else branch below, which just calls EndTurnProcess: it
+                // hatched and then passed, every single turn, never playing a
+                // card and never attacking. Every "bot vs bot" game was really
+                // one seat playing solitaire against a passive opponent, which
+                // silently halves what a generated corpus can exercise while
+                // looking like it works. It also broke replay outright: the
+                // local seat's implicit pass is logged inside this branch, so it
+                // went unrecorded and the engine still expected that seat to act
+                // when the next opponent row arrived (actor_mismatch).
+                //
+                // Let auto mode drive BOTH seats through this same brain. The
+                // else branch's auto EndTurnProcess is now unreachable, since the
+                // pass at the end of this block handles it and logs it.
+                if (GManager.instance.IsAI
+                    && (!gameContext.TurnPlayer.isYou || GManager.instance.isAuto))
                 {
                     if (RandomUtility.IsSucceedProbability(0.99f))
                     {
