@@ -68,7 +68,16 @@ namespace Digimon.Harness
                 Debug.LogError("[Harness] listing jobs failed: " + e.Message);
                 return;
             }
-            if (files.Length == 0) return;
+            if (files.Length == 0)
+            {
+                // [Harness mod - I3] Queue drained and no job is running (this
+                // method only runs when CurrentJob == null): release harness
+                // overrides so a game the user starts by hand afterward
+                // doesn't inherit harness decks / an 8x time scale. See
+                // ClearOverrides.
+                ClearOverrides();
+                return;
+            }
 
             Array.Sort(files, StringComparer.Ordinal);
             string source = files[0];
@@ -85,16 +94,32 @@ namespace Digimon.Harness
                 return;
             }
 
-            HarnessJob job = HarnessJob.Parse(SafeRead(claimed));
-            if (job == null)
+            // [Harness mod - I4] DeckBuilder.FromCardIds and DeckData throw on
+            // a few malformed-input paths that aren't guarded locally (see
+            // DeckBuilder.FromCardIds). An uncaught exception here would
+            // propagate out of TryClaimAndStart into the PollLoop coroutine,
+            // which Unity then stops silently -- the job orphans in claimed/
+            // and the harness never claims another one. Route any throw to
+            // Fail like every other rejection path instead.
+            HarnessJob job;
+            try
             {
-                Fail(claimed, "unparseable job file");
-                return;
-            }
+                job = HarnessJob.Parse(SafeRead(claimed));
+                if (job == null)
+                {
+                    Fail(claimed, "unparseable job file");
+                    return;
+                }
 
-            if (!ApplyJob(job))
+                if (!ApplyJob(job))
+                {
+                    Fail(claimed, "could not apply job (deck resolution failed)");
+                    return;
+                }
+            }
+            catch (Exception e)
             {
-                Fail(claimed, "could not apply job (deck resolution failed)");
+                Fail(claimed, "exception applying job: " + e.Message);
                 return;
             }
 
@@ -119,7 +144,16 @@ namespace Digimon.Harness
 
             CardObjectController.HarnessDeckOverrideP0 = p0;
             CardObjectController.HarnessDeckOverrideP1 = p1;
-            ContinuousController.instance.BattleDeckData = p0;
+            // [Harness mod - I3] Deliberately NOT setting
+            // ContinuousController.instance.BattleDeckData = p0 here. Its
+            // setter also writes LastBattleDeckData (see ContinuousController
+            // .BattleDeckData), which RoomManager republishes as a Photon room
+            // property and reuses for the user's next manually-started game.
+            // Both real readers of BattleDeckData (CardObjectController.
+            // CreatePlayerDecks, twice) check HarnessDeckOverrideP0/P1 FIRST
+            // and short-circuit before ever reaching BattleDeckData, so this
+            // assignment was dead code whose only live effect was clobbering
+            // the user's saved deck with "harness-p0".
 
             // Auto mode is what actually plays the game: it drives the local
             // seat's mulligan, breeding, and main phase. Without this the job
@@ -129,10 +163,36 @@ namespace Digimon.Harness
             {
                 GManager.instance.isAuto = true;
             }
+            // [Harness mod - C2] The assignment above is best-effort only:
+            // GManager has no DontDestroyOnLoad, so on the FIRST job
+            // GManager.instance is still null (skipped by the guard) and on
+            // every LATER job it targets the outgoing instance that
+            // SceneManager.LoadScene("BattleScene") below is about to
+            // destroy. The freshly-created GManager for the loaded scene only
+            // ever CLEARS isAuto in AwakeCoroutine. The authoritative
+            // enable-auto-mode path is now GManager.AwakeCoroutine itself,
+            // which asserts isAuto/IsAI when JobWatcher.Instance.CurrentJob is
+            // non-null (see GManager.cs). This assignment is kept because it
+            // is harmless and correct for any future codepath that reuses an
+            // already-loaded GManager without a scene reload.
 
-            // Determinism: every random draw in this game derives from the
-            // job's seed, so a divergence found in game 137 can be re-run.
+            // [Harness mod - C1] Determinism: DCGO's game-critical randomness
+            // (deck shuffling via RandomUtility.ShuffledDeckCards, bot
+            // decision rolls via RandomUtility.IsSucceedProbability) draws
+            // from GameRandom (Xoshiro256**), NOT UnityEngine.Random.
+            // GameRandom.Seed is the only seeding entry point and it is
+            // otherwise seeded once from OS entropy in
+            // ContinuousController.Init() -- nothing re-seeds it between here
+            // and the deck shuffle, so without this call no job is
+            // reproducible from its seed. GameRandom.Seed takes a `long`
+            // directly, so job.seed needs no truncation.
+            GameRandom.Seed(job.seed);
+            // UnityEngine.Random.InitState is kept as a secondary seed for
+            // the handful of non-game-critical paths (VFX, camera shake,
+            // etc.) that still pull from UnityEngine.Random. It is NOT what a
+            // seed-replay determinism check depends on -- GameRandom is.
             UnityEngine.Random.InitState(unchecked((int)job.seed));
+            Debug.Log("[Harness] job " + job.job_id + " seeded GameRandom with seed=" + job.seed);
 
             Time.timeScale = HarnessConfig.TimeScale;
             return true;
@@ -153,6 +213,26 @@ namespace Digimon.Harness
             }
             CurrentJob = null;
             ClaimedPath = null;
+            ClearOverrides();
+        }
+
+        /// <summary>
+        /// Releases every static/global override ApplyJob applies for the
+        /// duration of a job.
+        /// </summary>
+        /// <remarks>
+        /// [Harness mod - I3] Without this, harness state outlives the job
+        /// that set it: HarnessDeckOverrideP0/P1 keep redirecting
+        /// CardObjectController.CreatePlayerDecks to harness decks, and
+        /// Time.timeScale stays at 8 for the rest of the process, for any
+        /// game the user starts by hand after the batch drains. Called both
+        /// on job failure and when a poll finds the queue empty while idle.
+        /// </remarks>
+        private static void ClearOverrides()
+        {
+            CardObjectController.HarnessDeckOverrideP0 = null;
+            CardObjectController.HarnessDeckOverrideP1 = null;
+            Time.timeScale = 1f;
         }
 
         private static string SafeRead(string path)

@@ -27,6 +27,18 @@ namespace Digimon.Harness
                 return null;
             }
 
+            // [Harness mod - I4] ContinuousController.instance / SortedCardList
+            // are populated by ContinuousControllerScene's own load sequence;
+            // an unguarded dereference here throws a NullReferenceException if
+            // a job is ever applied before that finishes. Callers already
+            // route exceptions to Fail (see JobWatcher.TryClaimAndStart), but
+            // fail with a clear message here instead of an opaque NRE.
+            if (ContinuousController.instance == null || ContinuousController.instance.SortedCardList == null)
+            {
+                Debug.LogError("[Harness] deck '" + deckName + "' could not resolve card list (ContinuousController not ready)");
+                return null;
+            }
+
             var main = new List<CEntity_Base>();
             var digitama = new List<CEntity_Base>();
 
@@ -59,7 +71,24 @@ namespace Digimon.Harness
                 Debug.LogError("[Harness] deck '" + deckName + "' produced an invalid deck code");
                 return null;
             }
-            return new DeckData(code);
+
+            DeckData deck = new DeckData(code);
+
+            // [Harness mod - I5] IsValidDeckCode only checks structural shape
+            // (comma count, per-field character validity) -- a 3-card, 0-egg
+            // deck passes it. IsValidDeckData() is DCGO's real legality check
+            // (exactly 50 main-deck cards, <=5 egg, per-card legality) and is
+            // what CardObjectController / RoomManager gate real battles on.
+            // Without this, a malformed card-id list from the job silently
+            // produces a garbage recording that reads as a completed game
+            // instead of landing in failed/.
+            if (!deck.IsValidDeckData())
+            {
+                Debug.LogError("[Harness] deck '" + deckName + "' failed deck legality check (IsValidDeckData: needs exactly 50 main-deck cards, <=5 egg)");
+                return null;
+            }
+
+            return deck;
         }
     }
 }

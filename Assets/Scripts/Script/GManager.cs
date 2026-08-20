@@ -269,6 +269,25 @@ public class GManager : MonoBehaviourPun
             isAuto = false;
         }
 
+        // [Harness mod - C2] GManager is a plain BattleScene object (no
+        // DontDestroyOnLoad) that is destroyed and recreated by every
+        // SceneManager.LoadScene("BattleScene"). Digimon.Harness.JobWatcher
+        // sets ContinuousController.instance.isAI / GManager.instance.isAuto
+        // BEFORE calling LoadScene, so that assignment either targets a null
+        // instance (the very first job, when no GManager exists yet) or the
+        // outgoing instance that is about to be destroyed (every later job).
+        // The freshly-created GManager for the loaded scene only ever CLEARS
+        // isAuto, in the block immediately above -- so without this, auto
+        // mode is never actually on for the game that runs, and a harness job
+        // loads a board and then waits forever for a human. The harness
+        // therefore asserts on itself here, from inside its own
+        // AwakeCoroutine, once it is guaranteed to exist.
+        if (Digimon.Harness.JobWatcher.Instance != null && Digimon.Harness.JobWatcher.Instance.CurrentJob != null)
+        {
+            IsAI = true;
+            isAuto = true;
+        }
+
         turnStateMachine = gameObject.AddComponent<TurnStateMachine>();
 
         GetComponent<Effects>().Init();
