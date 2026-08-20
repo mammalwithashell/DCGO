@@ -93,14 +93,67 @@ namespace Digimon.Harness
                 Debug.Log("[Harness] card database ready; claiming jobs.");
             }
 
+            float idleSeconds = 0f;
+
             while (true)
             {
+                TouchHeartbeat();
+
                 if (CurrentJob == null && DcgoReady)
                 {
                     TryClaimAndStart();
                 }
+
+                if (CurrentJob == null)
+                {
+                    idleSeconds += HarnessConfig.PollSeconds;
+                    if (HarnessConfig.ExitAfterIdleSeconds > 0f
+                        && idleSeconds >= HarnessConfig.ExitAfterIdleSeconds)
+                    {
+                        Debug.Log("[Harness] idle for " + idleSeconds
+                                  + "s with an empty queue; exiting.");
+                        QuitApplication();
+                        yield break;
+                    }
+                }
+                else
+                {
+                    idleSeconds = 0f;
+                }
+
                 yield return new WaitForSecondsRealtime(HarnessConfig.PollSeconds);
             }
+        }
+
+        private void TouchHeartbeat()
+        {
+            try
+            {
+                // Rewrite rather than File.SetLastWriteTime: the content is a
+                // useful second signal (which job is in flight) and a rewrite
+                // updates mtime on every filesystem, which SetLastWriteTime does
+                // not reliably do over a network path.
+                Directory.CreateDirectory(HarnessConfig.Root);
+                File.WriteAllText(
+                    HarnessConfig.HeartbeatPath,
+                    (CurrentJob == null ? "idle" : CurrentJob.job_id) + "\n");
+            }
+            catch (System.Exception e)
+            {
+                // A failed heartbeat must not kill the batch. The host will see
+                // a stale file and restart, which is the correct response to a
+                // DCGO that cannot write to its own root.
+                Debug.LogWarning("[Harness] heartbeat write failed: " + e.Message);
+            }
+        }
+
+        private static void QuitApplication()
+        {
+#if UNITY_EDITOR
+            UnityEditor.EditorApplication.isPlaying = false;
+#else
+            Application.Quit();
+#endif
         }
 
         private void TryClaimAndStart()

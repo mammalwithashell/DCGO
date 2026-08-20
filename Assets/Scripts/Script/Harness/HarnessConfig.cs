@@ -95,6 +95,31 @@ namespace Digimon.Harness
         /// </summary>
         public static float TimeScale { get; set; } = 8f;
 
+        /// <summary>
+        /// File the watcher touches every poll so the host can tell a working
+        /// DCGO from a hung one.
+        /// </summary>
+        /// <remarks>
+        /// A PID is not enough: a hung Unity keeps its process alive and reports
+        /// healthy forever. Both failures actually hit so far -- the unleft
+        /// Photon room and the stalled selection -- looked exactly like that.
+        /// The heartbeat is touched from the poll loop rather than from job
+        /// completion, so it keeps advancing during a long game but stops if the
+        /// coroutine itself dies.
+        /// </remarks>
+        public static string HeartbeatPath => Path.Combine(Root, "harness.heartbeat");
+
+        /// <summary>
+        /// Quit after this many seconds with nothing to do. 0 disables it.
+        /// </summary>
+        /// <remarks>
+        /// One knob serves both lifecycles: a one-shot subprocess sets it low so
+        /// it terminates when the queue drains; the warm daemon sets it high or
+        /// leaves it off. Default 0 so Editor sessions are unaffected -- an
+        /// Editor that exits Play mode on its own would be baffling.
+        /// </remarks>
+        public static float ExitAfterIdleSeconds { get; set; }
+
         /// <summary>How often the watcher looks for new jobs.</summary>
         public static float PollSeconds { get; set; } = 1f;
 
