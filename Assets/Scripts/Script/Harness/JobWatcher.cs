@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.IO;
+using Photon.Pun;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
@@ -179,7 +180,7 @@ namespace Digimon.Harness
 
             // Same handoff the auto-mode restart uses.
             ContinuousController.instance.isAI = true;
-            SceneManager.LoadScene("BattleScene");
+            StartCoroutine(LoadBattleSceneWhenPhotonReady());
         }
 
         /// <summary>
@@ -362,6 +363,47 @@ namespace Digimon.Harness
             {
                 ContinuousController.instance.isAI = false;
             }
+        }
+
+        /// <summary>
+        /// Leave any Photon room left over from the previous job, then load the
+        /// battle scene.
+        /// </summary>
+        /// <remarks>
+        /// [Harness mod] DCGO's AI mode is not offline: TurnStateMachine.Init
+        /// connects to Photon and creates a private one-seat room. DCGO normally
+        /// leaves that room on the exit-to-menu path, which the harness bypasses
+        /// so it can chain jobs. The room therefore survived into the next job,
+        /// where Init does:
+        ///     if (!InLobby) JoinLobby();
+        ///     yield return new WaitWhile(() =&gt; !InLobby);
+        /// Photon refuses to join a lobby while still in a room, so that wait
+        /// never completed -- the second game of every batch hung on "Now
+        /// Loading" with no error. Leave the room and wait for it to take effect
+        /// before loading, so Init starts from the same clean state the first
+        /// job enjoyed.
+        /// </remarks>
+        private IEnumerator LoadBattleSceneWhenPhotonReady()
+        {
+            if (PhotonNetwork.InRoom)
+            {
+                Debug.Log("[Harness] leaving the previous job's Photon room");
+                PhotonNetwork.LeaveRoom();
+
+                float deadline = Time.realtimeSinceStartup + 15f;
+                yield return new WaitWhile(() =>
+                    PhotonNetwork.InRoom && Time.realtimeSinceStartup < deadline);
+
+                if (PhotonNetwork.InRoom)
+                {
+                    // Do not load into a state we know hangs; fail loudly so the
+                    // job is requeued rather than silently stalling the batch.
+                    Fail(ClaimedPath, "timed out leaving the previous Photon room");
+                    yield break;
+                }
+            }
+
+            SceneManager.LoadScene("BattleScene");
         }
 
         private static string SafeRead(string path)
