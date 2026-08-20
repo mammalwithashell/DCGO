@@ -44,11 +44,15 @@ namespace Digimon.Recording
         public string OutputDirectory { get; set; }
 
         /// <summary>
-        /// Flush the JSONL writer after this many rows. Smaller = less data
-        /// lost on crash; larger = less I/O overhead. Phase 1 default of 16
-        /// is a guess — tune based on observed bot-match cadence.
+        /// Flush the JSONL writer after this many rows.
+        ///
+        /// Flush every row. When a harness game stalls, the recording is the
+        /// only evidence of WHERE it stalled -- and with buffering the stalled
+        /// game left a completely empty file, which is the worst possible state
+        /// for diagnosis. A few hundred small writes per game is nothing next to
+        /// the cost of an undiagnosable hang.
         /// </summary>
-        public int FlushEveryNRows { get; set; } = 16;
+        public int FlushEveryNRows { get; set; } = 1;
 
         /// <summary>
         /// Upstream DCGO nulls the bot's attack decision in UNITY_EDITOR

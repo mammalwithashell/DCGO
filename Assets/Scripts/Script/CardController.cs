@@ -530,7 +530,17 @@ public class PlayCardClass
                                             }
                                         }
 
-                                        if (!card.Owner.isYou && GManager.instance.IsAI)
+                                        // [Harness mod] A card with two or more
+                                        // digivolution costs prompts "Which
+                                        // digivolution cost do you pay?". The AI
+                                        // opponent is routed past that prompt
+                                        // here; under auto mode the local seat is
+                                        // bot-driven too, and without this it
+                                        // opens the prompt and waits for a click
+                                        // that never comes. Rare enough that
+                                        // several games complete before hitting it.
+                                        if ((!card.Owner.isYou || Digimon.Harness.HarnessAuto.DrivesLocalSeat)
+                                            && GManager.instance.IsAI)
                                         {
                                             MoveToExecuteCardEffect = false;
 
