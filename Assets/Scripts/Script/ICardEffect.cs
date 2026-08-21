@@ -1214,6 +1214,38 @@ public static class ActivateICardEffectExtensionClass
 
             //Optional effect activation selection → cost → processing
             yield return ContinuousController.instance.StartCoroutine(Activate_Effect_Execute(activateICardEffect, hash, useEffectCallback));
+
+            // [Recording mod] effect_activation row. Fired HERE -- after
+            // Activate_Effect_Execute returns -- and NOT at the
+            // Debug.Log("Activate_Optional_Effect_Execute: ...") above,
+            // which runs BEFORE the optional yes/no decision (isCheckOptional
+            // branch) is even asked. Hooking there would record a DECLINED
+            // "you may" effect as though it had executed -- the same
+            // attempted-vs-resolved ambiguity LogAction/LogActionResolution
+            // already had to be split apart to fix for main-phase actions.
+            // `executed` mirrors the EXACT gate Activate_Effect_Execute
+            // itself used one line above to decide whether to run the
+            // effect body (`UseOptional || !IsOptional`) -- true for every
+            // mandatory effect, and for an optional effect only when the
+            // player chose "Use" (human click OR, under the harness, DCGO's
+            // own AI/auto branch in OptionalSkill.SelectOptional -- see its
+            // `GManager.instance.IsAI` branch, which both seats route
+            // through under Digimon.Harness.HarnessAuto.DrivesLocalSeat).
+            {
+                ICardEffect loggedEffect = (ICardEffect)activateICardEffect;
+                CardSource loggedCard = loggedEffect.EffectSourceCard;
+                if (loggedCard != null && loggedCard.Owner != null)
+                {
+                    Digimon.Recording.GameRecorder.Instance?.LogEffectActivation(
+                        loggedCard.Owner.PlayerID,
+                        loggedCard.CardID,
+                        loggedEffect.EffectName,
+                        loggedEffect.EffectDescription,
+                        loggedEffect.IsOptional,
+                        loggedEffect.UseOptional || !loggedEffect.IsOptional,
+                        GManager.instance?.turnStateMachine?.gameContext?.TurnPhase.ToString() ?? "Unknown");
+                }
+            }
         }
 
         foreach (Player player in GManager.instance.turnStateMachine.gameContext.Players)

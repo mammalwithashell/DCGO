@@ -47,6 +47,13 @@ namespace Digimon.Recording
     ///                        "Custom"/...) fields — see <see cref="LogSelectionRow"/>.
     ///   <c>initial_state</c> — (added post-v1, optional) post-mulligan zone snapshot,
     ///                        emitted once per game — see <see cref="LogInitialState"/>
+    ///   <c>effect_activation</c> — (added post-v1, optional) one row per card-effect
+    ///                        activation — <c>card_id</c>, <c>effect_name</c>,
+    ///                        <c>effect_description</c>, <c>is_optional</c>,
+    ///                        <c>executed</c> (offered-vs-actually-ran, distinct from
+    ///                        merely being offered). Fired AFTER the optional yes/no
+    ///                        decision resolves, never before — see
+    ///                        <see cref="LogEffectActivation"/>.
     ///   <c>encoder_failure</c> — sentinel for decisions the encoder cannot yet map
     ///   <c>game_end</c>    — terminal row with winner and reason
     ///
@@ -634,6 +641,72 @@ namespace Digimon.Recording
             if (zone != null)       { sb.Append(','); AppendKv(sb, "zone", zone); }
             AppendMemory(sb);
             AppendBoards(sb);
+            sb.Append('}');
+            WriteRow(sb.ToString());
+        }
+
+        /// <summary>
+        /// [Recording mod] Log a card-effect activation — the row that turns
+        /// clause-level coverage from unmeasurable into measured. Called from
+        /// inside <c>ICardEffectExtensionClass.Activate_Optional_Effect_Execute</c>
+        /// (<c>ICardEffect.cs</c>), immediately AFTER its
+        /// <c>Activate_Effect_Execute</c> coroutine returns — the single funnel
+        /// every card-effect activation in DCGO passes through, both the
+        /// generic queue-driven path (<c>AutoProcessing.ActivateEffectProcess</c>)
+        /// and the ~35 call sites where an individual card script directly
+        /// activates a linked/cutin/chain sub-effect.
+        ///
+        /// Deliberately NOT hooked at the pre-existing
+        /// <c>Debug.Log($"Activate_Optional_Effect_Execute: ...")</c> earlier in
+        /// that method — that line fires BEFORE the optional yes/no decision,
+        /// so an effect that was OFFERED and DECLINED would misrecord as
+        /// having executed. This is the same attempted-vs-resolved distinction
+        /// <see cref="LogAction"/> / <see cref="LogActionResolution"/> already
+        /// had to be split apart to fix for main-phase actions.
+        /// </summary>
+        /// <param name="actorPlayerId">The effect source card's owner
+        /// (<c>card.Owner.PlayerID</c>) — matches every other row's `actor`
+        /// convention.</param>
+        /// <param name="cardId">The resolved printed card ID of the effect's
+        /// source card (<c>CardSource.CardID</c>), NOT the display name.
+        /// <c>null</c> only defensively (the call site already guards on a
+        /// non-null <c>EffectSourceCard</c>).</param>
+        /// <param name="effectName">
+        /// <c>ICardEffect.EffectName</c> — short identifier, e.g. "OnPlay".</param>
+        /// <param name="effectDescription">
+        /// <c>ICardEffect.EffectDescription</c> — the printed clause text
+        /// (e.g. starts with "[On Play]", "[On Deletion]", ...). This is the
+        /// field a consumer maps back to a printed clause with, so it matters
+        /// most of everything on this row.</param>
+        /// <param name="isOptional"><c>ICardEffect.IsOptional</c> — whether
+        /// this is a "you may" effect.</param>
+        /// <param name="executed">Whether the effect body actually ran, versus
+        /// was offered and declined. Mirrors the exact gate
+        /// <c>Activate_Effect_Execute</c> itself checks
+        /// (<c>UseOptional || !IsOptional</c>) one line before this call: a
+        /// mandatory effect (<c>!IsOptional</c>) is always <c>true</c>; an
+        /// optional effect is <c>true</c> only when
+        /// <c>ICardEffect.UseOptional</c> (the resolved "Use"/"Not use"
+        /// answer — human click or, under the harness, DCGO's own AI/auto
+        /// branch in <c>OptionalSkill.SelectOptional</c>) was set.</param>
+        /// <param name="phaseName"><c>GameContext.TurnPhase</c> at activation
+        /// time — same read as every other row's `phase` field.</param>
+        public void LogEffectActivation(int actorPlayerId, string cardId, string effectName,
+                                        string effectDescription, bool isOptional, bool executed,
+                                        string phaseName)
+        {
+            if (!_gameInProgress || _writer == null) return;
+            var sb = new StringBuilder(192);
+            sb.Append('{');
+            AppendKv(sb, "type", "effect_activation"); sb.Append(',');
+            AppendKv(sb, "step", _stepIndex++);        sb.Append(',');
+            AppendKv(sb, "actor", actorPlayerId);      sb.Append(',');
+            if (cardId != null) { AppendKv(sb, "card_id", cardId); sb.Append(','); }
+            AppendKv(sb, "effect_name", effectName ?? "");               sb.Append(',');
+            AppendKv(sb, "effect_description", effectDescription ?? ""); sb.Append(',');
+            AppendKv(sb, "is_optional", isOptional); sb.Append(',');
+            AppendKv(sb, "executed", executed);      sb.Append(',');
+            AppendKv(sb, "phase", phaseName ?? "Unknown");
             sb.Append('}');
             WriteRow(sb.ToString());
         }
