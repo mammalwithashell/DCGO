@@ -1364,6 +1364,58 @@ public class TurnStateMachine : MonoBehaviourPunCallbacks
                                                 {
                                                     if (PlayCard.CanPlayCardTargetFrame(gameContext.TurnPlayer.fieldCardFrames[i], true, null))
                                                     {
+                                                        // [Harness mod] CanPlayCardTargetFrame's own cost gate
+                                                        // (CardSource.cs, "PayCost && frame.GetFramePermanent() ==
+                                                        // null" branch) calls PayingCost(..., checkAvailability:
+                                                        // true). For a fresh (non-evolution) play of a card with
+                                                        // HasDigiXros/HasAssembly, checkAvailability:true is
+                                                        // unreliable: CardSource.GetPayingCostWithBaseCost's
+                                                        // "DigiXros"/"Assembly" regions short-circuit to cost 0
+                                                        // there whenever Owner.CanReduceCost(...) is true, UNLESS
+                                                        // "!Owner.isYou && GManager.instance.IsAI" -- a gate
+                                                        // written back when the AI only ever drove the opponent
+                                                        // (non-"you") seat, so the "you" seat's own hand always
+                                                        // fell through to this optimistic branch for the human's
+                                                        // benefit (inviting a drag attempt that the Assembly/
+                                                        // DigiXros selection UI would then resolve for real). The
+                                                        // harness now drives the "you" seat through this same AI
+                                                        // brain too (isAuto), so that seat's Assembly/DigiXros
+                                                        // cards get reported as free even when no valid Assembly/
+                                                        // DigiXros materials (trash/hand/board, per the card's own
+                                                        // condition) are actually available to select. Re-check
+                                                        // with PayingCost(..., checkAvailability:
+                                                        // false) -- the exact real-cost call the play procedure
+                                                        // itself rejects on (CardController.PlayCardClass.
+                                                        // PlayCard(), "fix cost to pay" / "end play cards"
+                                                        // regions: Cost = card.GetPayingCostWithBaseCost(...,
+                                                        // checkAvailability: false, ...); if (Cost >
+                                                        // card.Owner.MaxMemoryCost) { playFailed = true; }) --
+                                                        // and used identically elsewhere in the codebase, e.g.
+                                                        // BT16_065.cs: "cardSource.PayingCost(Root.Hand, null,
+                                                        // checkAvailability: false) > cardSource.Owner.
+                                                        // MaxMemoryCost". For evolution frames this reproduces
+                                                        // the same cost CanPlayCardTargetFrame already found (
+                                                        // EvoCosts has no such AI shortcut), so evolution
+                                                        // affordability is unaffected either way. For a fresh
+                                                        // Assembly/DigiXros play this reads as "no discount"
+                                                        // (no material selection has run yet at this point in
+                                                        // the loop), which is pessimistic if valid materials
+                                                        // genuinely exist -- an acceptable trade per this repo's
+                                                        // stance that DCGO bot skill is not the goal, faithful
+                                                        // non-phantom recordings are (see CLAUDE.md/this change's
+                                                        // brief): it only ever makes the bot MORE conservative,
+                                                        // never queues a play it can't pay for.
+                                                        Permanent realCostTarget = gameContext.TurnPlayer.fieldCardFrames[i].GetFramePermanent();
+
+                                                        List<Permanent> realCostTargets = realCostTarget != null
+                                                            ? new List<Permanent>() { realCostTarget }
+                                                            : null;
+
+                                                        if (PlayCard.PayingCost(SelectCardEffect.Root.Hand, realCostTargets, checkAvailability: false) > PlayCard.Owner.MaxMemoryCost)
+                                                        {
+                                                            continue;
+                                                        }
+
                                                         int k = i;
 
                                                         int count = 4;
@@ -1395,6 +1447,24 @@ public class TurnStateMachine : MonoBehaviourPunCallbacks
                                                     }
 
                                                     break;
+                                                }
+
+                                                else
+                                                {
+                                                    // [Harness mod] No frame survived the affordability
+                                                    // re-check above: don't leave PlayCard dangling on a card
+                                                    // this loop already rejected -- if this was the last
+                                                    // candidate in CanPlayCards, an unset PlayCard here would
+                                                    // otherwise fall out of the foreach still pointing at an
+                                                    // unaffordable card with TargetFrameID untouched (-1, from
+                                                    // ResetMainPhaseParameter), which the "[Recording mod]"
+                                                    // block below logs as a queued PlayCardAction regardless
+                                                    // of whether PlayCard() can actually complete it -- exactly
+                                                    // the phantom "queued but never completed" action this fix
+                                                    // exists to prevent. Clearing it here lets the foreach
+                                                    // correctly try the next candidate, and lets the AI fall
+                                                    // through to a pass if none are truly playable.
+                                                    PlayCard = null;
                                                 }
                                             }
 
