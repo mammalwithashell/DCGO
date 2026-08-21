@@ -847,9 +847,55 @@ public class SelectCardEffect : MonoBehaviourPunCallbacks
         GManager.instance.turnStateMachine.IsSelecting = oldIsSelecting;
     }
 
+    /// <summary>
+    /// [Harness mod - phase 2] The card IDs this prompt would accept, for the
+    /// scripted driver's prompt assertion. Recomputed from the same
+    /// root-list + predicate pair <c>AutoSelect</c> uses, which is pure
+    /// selection logic with no side effects.
+    /// </summary>
+    private System.Collections.Generic.List<string> ScriptedCandidateIds()
+    {
+        try
+        {
+            var ids = new System.Collections.Generic.List<string>();
+            foreach (CardSource cardSource in RootCardList())
+            {
+                if (CanSelectCard(cardSource)) ids.Add(cardSource?.CardID ?? "");
+            }
+            return ids;
+        }
+        catch (System.Exception)
+        {
+            // An absent candidate list means NOT MEASURED, never "none
+            // offered" -- a step asserting candidates then fails loudly.
+            return null;
+        }
+    }
+
     [PunRPC]
     public void SetTargetCardAndIndicies(int playerID, int[] CardIDs, int[] Indicies)
     {
+        // [Harness mod - phase 2] A scripted line answers here, before the
+        // recorder sees anything, so the recorded row carries what the script
+        // asked for rather than the value the AI computed and we discard.
+        // A false return is never "the script declined" -- TryAnswer has
+        // already aborted the job on a mismatch -- so do not fall through.
+        if (Digimon.Harness.InputDriver.IsActive)
+        {
+            int __scripted;
+            if (!Digimon.Harness.InputDriver.TryAnswer(
+                    playerID, Digimon.Harness.InputDriver.KindSelectCard,
+                    _maxCount, ScriptedCandidateIds(), out __scripted))
+            {
+                return;
+            }
+            // The scripted value is an ActiveCardList card index; negative
+            // means decline (an empty pick, which is what the recorder's
+            // cancel branch and the "Not Select" path both read).
+            CardIDs = __scripted < 0 ? new int[0] : new int[] { __scripted };
+            Indicies = null;
+        }
+
         // [Recording mod] panel picks: card identities + display-order indexes.
         // Empty/null = decline ("Not Select"). `mechanic`/`zone` tag this row
         // as an Assembly/DigiXros material declaration when it is one --

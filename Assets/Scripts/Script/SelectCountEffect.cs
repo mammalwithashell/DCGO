@@ -200,9 +200,49 @@ public class SelectCountEffect : MonoBehaviourPunCallbacks
         }
     }
 
+    /// <summary>
+    /// [Harness mod - phase 2] The numbers this prompt offered, stringified,
+    /// for the scripted driver's prompt assertion. Read from the same
+    /// <c>_lastCandidates</c> snapshot the recorder writes onto the row, so a
+    /// scripted step and a recorded row compare like for like.
+    /// </summary>
+    private List<string> ScriptedCandidateLabels()
+    {
+        if (_lastCandidates == null) return null;
+        var labels = new List<string>(_lastCandidates.Count);
+        foreach (int n in _lastCandidates) labels.Add(n.ToString());
+        return labels;
+    }
+
     [PunRPC]
     public void SetCount(int playerID, int selectedCount)
     {
+        // [Harness mod - phase 2] A scripted line answers here, before the
+        // recorder sees anything, so the recorded row carries what the script
+        // asked for rather than the value the AI computed and we discard.
+        // A false return is never "the script declined" -- TryAnswer has
+        // already aborted the job on a mismatch -- so do not fall through.
+        //
+        // This is also where CardController.cs:700's decision surfaces: that
+        // gate has no AutoSelect of its own, it only sets flags and falls
+        // through to selectCountEffect.Activate(). Hooking it there would have
+        // been a second, different shape; here it needs no hook at all.
+        //
+        // Count is the number of PICKS the prompt takes (always one -- a
+        // count prompt answers with a single number), not the number chosen.
+        // The offered numbers are the candidate list.
+        if (Digimon.Harness.InputDriver.IsActive)
+        {
+            int __scripted;
+            if (!Digimon.Harness.InputDriver.TryAnswer(
+                    playerID, Digimon.Harness.InputDriver.KindSelectCount,
+                    1, ScriptedCandidateLabels(), out __scripted))
+            {
+                return;
+            }
+            selectedCount = __scripted;
+        }
+
         // [Recording mod] Count prompts carry the semantic number itself, plus
         // the candidate set it was chosen from -- the value alone cannot be
         // mapped onto our engine's indexed branch list.

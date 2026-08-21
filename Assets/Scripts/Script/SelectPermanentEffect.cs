@@ -1045,6 +1045,46 @@ public class SelectPermanentEffect : MonoBehaviourPunCallbacks
     [PunRPC]
     public void SetTargetFrames(int playerID, bool[] isTurnPlayer, int[] UnitIndex)
     {
+        // [Harness mod - phase 2] A scripted line answers here, before the
+        // recorder sees anything, so the recorded row carries what the script
+        // asked for rather than the value the AI computed and we discard.
+        // A false return is never "the script declined" -- TryAnswer has
+        // already aborted the job on a mismatch -- so do not fall through.
+        //
+        // No candidate list: the selectable set here is built by a multi-stage
+        // enumeration (ParameterComparer.Enumerate over combinations), not a
+        // single predicate filter, so it is not recomputable cheaply at this
+        // seam. Passing null marks it NOT MEASURED rather than "none offered".
+        if (Digimon.Harness.InputDriver.IsActive)
+        {
+            int __scripted;
+            if (!Digimon.Harness.InputDriver.TryAnswer(
+                    playerID, Digimon.Harness.InputDriver.KindSelectPermanent,
+                    _maxCount, null, out __scripted))
+            {
+                return;
+            }
+            bool __side;
+            int __index;
+            if (Digimon.Harness.InputDriver.TryDecodePermanentTarget(__scripted, out __side, out __index))
+            {
+                isTurnPlayer = new bool[] { __side };
+                UnitIndex = new int[] { __index };
+            }
+            else if (__scripted == Digimon.Harness.InputDriver.Cancel)
+            {
+                isTurnPlayer = null;
+                UnitIndex = null;
+            }
+            else
+            {
+                // Decline: empty arrays are DCGO's zero-pick confirm, which is
+                // a DIFFERENT answer from cancel and must stay distinguishable.
+                isTurnPlayer = new bool[0];
+                UnitIndex = new int[0];
+            }
+        }
+
         // [Recording mod] permanent picks: (null,null) = cancel; empty = zero-pick
         // confirm; else compact battle-area indexes, which is what our action
         // space targets (see ActionEncoder.ValidateFieldSlot). The turn-relative

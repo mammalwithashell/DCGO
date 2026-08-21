@@ -26,6 +26,29 @@ public class UserSelectionManager : MonoBehaviourPunCallbacks
             return;
         }
 
+        // [Harness mod - phase 2] A scripted line answers here, before the
+        // recorder sees anything, so the recorded row carries what the script
+        // asked for rather than the value the AI computed and we discard.
+        // A false return is never "the script declined" -- TryAnswer has
+        // already aborted the job on a mismatch -- so do not fall through.
+        //
+        // This is the FALLBACK channel, not "every selection response": every
+        // typed prompt has its own dedicated RPC hook. Its rows carry no
+        // candidate list and no per-prompt meaning, so a scripted step here
+        // asserts nothing beyond the kind, and its value has to be authored
+        // from a recording of the same position.
+        if (Digimon.Harness.InputDriver.IsActive)
+        {
+            int __scripted;
+            if (!Digimon.Harness.InputDriver.TryAnswer(
+                    playerID, Digimon.Harness.InputDriver.KindGenericInt,
+                    -1, null, out __scripted))
+            {
+                return;
+            }
+            value = __scripted;
+        }
+
         // [Recording mod] capture the selection. Hooked at the [PunRPC] target
         // so direct, RPC-wrapped, and bot-Random paths all route through here.
         // Phase determination uses GameContext.TurnPhase from the global manager.
@@ -56,6 +79,21 @@ public class UserSelectionManager : MonoBehaviourPunCallbacks
         if (selectionPlayer == null)
         {
             return;
+        }
+
+        // [Harness mod - phase 2] Scripted answer; see the SetIntForPlayer
+        // twin above for why this fallback channel asserts less than a typed
+        // prompt does.
+        if (Digimon.Harness.InputDriver.IsActive)
+        {
+            int __scripted;
+            if (!Digimon.Harness.InputDriver.TryAnswer(
+                    playerID, Digimon.Harness.InputDriver.KindGenericBool,
+                    1, null, out __scripted))
+            {
+                return;
+            }
+            value = __scripted != 0;
         }
 
         // [Recording mod] capture bool selection (yes/no, optional triggers).

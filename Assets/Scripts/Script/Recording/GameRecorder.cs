@@ -84,6 +84,20 @@ namespace Digimon.Recording
         /// <summary>Path of the JSONL file for the game in progress, or "" when idle.</summary>
         public string CurrentRecordingPath { get; private set; } = "";
 
+        /// <summary>
+        /// The step counter the next decision row will use. Exposed so the
+        /// harness's StateDumper can key its sidecar to the SAME index the
+        /// recording uses.
+        /// </summary>
+        /// <remarks>
+        /// Read-only on purpose. A second counter maintained in parallel would
+        /// drift the moment either side added a row type that does or does not
+        /// increment -- and a drifted sidecar makes the differ compare step N of
+        /// one game against step N+1 of the other, reporting divergences that
+        /// are pure bookkeeping.
+        /// </remarks>
+        public int CurrentStepIndex => _stepIndex;
+
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
         private static void Bootstrap()
         {
@@ -198,6 +212,18 @@ namespace Digimon.Recording
                 // [Harness mod] Only publish the path once the writer has
                 // actually opened -- see the reset comment above.
                 CurrentRecordingPath = _currentRecordingPath;
+
+                // [Harness mod - phase 2] Keep the state sidecar's lifetime
+                // tied to the recording's, so the two always describe the same
+                // game. Opened HERE rather than from JobWatcher.ApplyJob
+                // because the recording path is not known until this point.
+                // Gated on a live harness job so a human-started game never
+                // writes one.
+                if (Digimon.Harness.JobWatcher.Instance != null &&
+                    Digimon.Harness.JobWatcher.Instance.CurrentJob != null)
+                {
+                    Digimon.Harness.StateDumper.Open(_currentRecordingPath);
+                }
             }
             catch (Exception e)
             {
@@ -292,6 +318,9 @@ namespace Digimon.Recording
         public void LogGameEnd(int winnerPlayerId, string reason)
         {
             if (!_gameInProgress) return;
+            // [Harness mod - phase 2] Close the sidecar before the recording's
+            // own writer, so the two files end together.
+            Digimon.Harness.StateDumper.Close();
             CloseCurrentRecording(winnerPlayerId, reason);
         }
 
@@ -590,6 +619,10 @@ namespace Digimon.Recording
                                     string zone = null)
         {
             if (!_gameInProgress || _writer == null) return;
+            // [Harness mod - phase 2] Dump BEFORE the row is emitted, so the
+            // sidecar records the state the decision was made IN, not the state
+            // it left behind -- and while _stepIndex still names THIS row.
+            Digimon.Harness.StateDumper.Dump();
             var sb = new StringBuilder(192);
             sb.Append('{');
             AppendKv(sb, "type", "selection");        sb.Append(',');
@@ -716,6 +749,12 @@ namespace Digimon.Recording
         private void EmitDecisionRow(int actor, ActionEncoder.Encoded encoded,
                                      string phase, string source, string cardId = null)
         {
+            // [Harness mod - phase 2] The shared chokepoint for main_phase,
+            // mulligan, breeding_action and the two generic selection sources,
+            // so one call here covers every decision kind that is not a
+            // LogSelectionRow. Dumped BEFORE the row, for the same
+            // state-the-decision-was-made-in reason as LogSelectionRow.
+            Digimon.Harness.StateDumper.Dump();
             var sb = new StringBuilder(160);
             sb.Append('{');
             if (encoded.IsFailure)

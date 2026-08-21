@@ -776,9 +776,56 @@ public class SelectHandEffect : MonoBehaviourPunCallbacks
     }
 
     #region ƒJ[ƒh‘I‘ð‚ðŒˆ’è
+    /// <summary>
+    /// [Harness mod - phase 2] The card IDs this prompt would accept, for the
+    /// scripted driver's prompt assertion. Same hand + predicate pair the
+    /// selection loop itself filters on; pure, no side effects.
+    /// </summary>
+    private List<string> ScriptedCandidateIds()
+    {
+        try
+        {
+            var ids = new List<string>();
+            if (_selectPlayer == null || _selectPlayer.HandCards == null) return null;
+            foreach (CardSource cardSource in _selectPlayer.HandCards)
+            {
+                if (_canTargetCondition == null || _canTargetCondition(cardSource))
+                {
+                    ids.Add(cardSource?.CardID ?? "");
+                }
+            }
+            return ids;
+        }
+        catch (Exception)
+        {
+            // An absent candidate list means NOT MEASURED, never "none
+            // offered" -- a step asserting candidates then fails loudly.
+            return null;
+        }
+    }
+
     [PunRPC]
     public void SetTargetHandCards(int playerID, int[] CardIDs)
     {
+        // [Harness mod - phase 2] A scripted line answers here, before the
+        // recorder sees anything, so the recorded row carries what the script
+        // asked for rather than the value the AI computed and we discard.
+        // A false return is never "the script declined" -- TryAnswer has
+        // already aborted the job on a mismatch -- so do not fall through.
+        if (Digimon.Harness.InputDriver.IsActive)
+        {
+            int __scripted;
+            if (!Digimon.Harness.InputDriver.TryAnswer(
+                    playerID, Digimon.Harness.InputDriver.KindSelectHand,
+                    _maxCount, ScriptedCandidateIds(), out __scripted))
+            {
+                return;
+            }
+            // ActiveCardList card index; negative means decline, which this
+            // RPC expresses as a null array (the recorder's cancel branch).
+            CardIDs = __scripted < 0 ? null : new int[] { __scripted };
+        }
+
         // [Recording mod] hand picks arrive as ActiveCardList indices; record
         // card identities (order = selection order). null = decline.
         // `mechanic`: this class is only ever used for DigiXros hand material

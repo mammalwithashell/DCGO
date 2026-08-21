@@ -19,6 +19,16 @@ public class CardObjectController : MonoBehaviour
     public static DeckData HarnessDeckOverrideP0 = null;
     public static DeckData HarnessDeckOverrideP1 = null;
 
+    /// <summary>
+    /// [Harness mod - phase 2] Fixed prefix of the initial draw order per seat.
+    /// </summary>
+    /// <remarks>
+    /// Applied ONLY in the two short-circuits below, which is what keeps
+    /// mid-game "shuffle your deck" effects honest -- see DeckStacker's remarks.
+    /// </remarks>
+    public static string[] HarnessDeckOrderP0 = null;
+    public static string[] HarnessDeckOrderP1 = null;
+
     #region Generate cards for each player's deck
     public static IEnumerator CreatePlayerDecks(CardSource CardPrefab, GameContext gameContext)
     {
@@ -140,8 +150,27 @@ public class CardObjectController : MonoBehaviour
             // BattleDeckData / RandomDeck selection entirely.
             if (HarnessDeckOverrideP0 != null && HarnessDeckOverrideP1 != null)
             {
-                DeckData chosen = (player == MasterPlayer) ? HarnessDeckOverrideP0 : HarnessDeckOverrideP1;
-                return RandomUtility.ShuffledDeckCards(chosen.DeckCards());
+                bool isP0 = (player == MasterPlayer);
+                DeckData chosen = isP0 ? HarnessDeckOverrideP0 : HarnessDeckOverrideP1;
+                List<CEntity_Base> shuffled = RandomUtility.ShuffledDeckCards(chosen.DeckCards());
+
+                string[] order = isP0 ? HarnessDeckOrderP0 : HarnessDeckOrderP1;
+                List<CEntity_Base> stacked =
+                    Digimon.Harness.DeckStacker.Apply(shuffled, order, out string stackError);
+                if (stackError != null)
+                {
+                    // Fail the job rather than play a game whose opening hand is
+                    // not the one the scenario asked for. A silently-unstacked
+                    // deck answers a different question and reads as a pass.
+                    Debug.LogError("[Harness] main deck stack failed: " + stackError);
+                    if (Digimon.Harness.JobWatcher.Instance != null)
+                    {
+                        Digimon.Harness.JobWatcher.Instance.AbortCurrentJob(
+                            "main deck stack failed: " + stackError);
+                    }
+                    return shuffled;
+                }
+                return stacked;
             }
 
             #region 対人戦
@@ -234,8 +263,31 @@ public class CardObjectController : MonoBehaviour
             // BattleDeckData / RandomDeck selection entirely.
             if (HarnessDeckOverrideP0 != null && HarnessDeckOverrideP1 != null)
             {
-                DeckData chosen = (player == MasterPlayer) ? HarnessDeckOverrideP0 : HarnessDeckOverrideP1;
-                return RandomUtility.ShuffledDeckCards(chosen.DigitamaDeckCards());
+                bool isP0 = (player == MasterPlayer);
+                DeckData chosen = isP0 ? HarnessDeckOverrideP0 : HarnessDeckOverrideP1;
+                List<CEntity_Base> shuffled = RandomUtility.ShuffledDeckCards(chosen.DigitamaDeckCards());
+
+                // The egg deck draws from the SAME per-seat order array. A
+                // scenario naming only main-deck cards leaves the egg order
+                // untouched, because DeckStacker.Apply errors on a card the
+                // deck does not hold -- so egg stacking is opt-in by naming an
+                // egg card, and mis-naming is loud rather than silent.
+                //
+                // Deliberate asymmetry vs the main deck above: a main-deck stack
+                // failure ABORTS the job, an egg-deck one logs and continues.
+                // Both decks are offered the same order array, so a main-only
+                // stack necessarily fails to resolve against the egg deck --
+                // treating that as fatal would abort every ordinary scenario.
+                string[] order = isP0 ? HarnessDeckOrderP0 : HarnessDeckOrderP1;
+                List<CEntity_Base> stacked =
+                    Digimon.Harness.DeckStacker.Apply(shuffled, order, out string stackError);
+                if (stackError != null)
+                {
+                    Debug.Log("[Harness] egg deck not stacked (" + stackError +
+                              "); using shuffled order");
+                    return shuffled;
+                }
+                return stacked;
             }
 
             #region 対人戦

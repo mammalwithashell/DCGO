@@ -137,6 +137,28 @@ public class OptionalSkill : MonoBehaviourPunCallbacks
     [PunRPC]
     public void SetUseOptional(int playerID, bool useOptional)
     {
+        // [Harness mod - phase 2] A scripted line answers here, before the
+        // recorder sees anything, so the recorded row carries what the script
+        // asked for rather than the value the AI computed and we discard.
+        // A false return is never "the script declined" -- TryAnswer has
+        // already aborted the job on a mismatch -- so do not fall through.
+        //
+        // This is the yes/no every "you may" clause funnels through, so it is
+        // the single most load-bearing site for a clause exam: it is what lets
+        // a scenario FORCE an optional effect to execute rather than hoping
+        // the AI accepted it.
+        if (Digimon.Harness.InputDriver.IsActive)
+        {
+            int __scripted;
+            if (!Digimon.Harness.InputDriver.TryAnswer(
+                    playerID, Digimon.Harness.InputDriver.KindOptionalSkill,
+                    1, null, out __scripted))
+            {
+                return;
+            }
+            useOptional = __scripted != 0;
+        }
+
         // [Recording mod] canonical optional-effect yes/no.
         Digimon.Recording.GameRecorder.Instance?.LogSelectionRow(
             playerID, "OptionalSkill", GManager.instance?.turnStateMachine?.gameContext?.TurnPhase.ToString() ?? "Unknown", boolValue: useOptional);

@@ -557,6 +557,38 @@ public class SelectAttackEffect : MonoBehaviourPunCallbacks
     [PunRPC]
     public void SetAttackTarget(int playerID, bool isTurnPlayer, int permanentIndex)
     {
+        // [Harness mod - phase 2] A scripted line answers here, before the
+        // recorder sees anything, so the recorded row carries what the script
+        // asked for rather than the value the AI computed and we discard.
+        // A false return is never "the script declined" -- TryAnswer has
+        // already aborted the job on a mismatch -- so do not fall through.
+        if (Digimon.Harness.InputDriver.IsActive)
+        {
+            int __scripted;
+            if (!Digimon.Harness.InputDriver.TryAnswer(
+                    playerID, Digimon.Harness.InputDriver.KindSelectAttack,
+                    1, null, out __scripted))
+            {
+                return;
+            }
+            bool __side;
+            int __index;
+            if (Digimon.Harness.InputDriver.TryDecodePermanentTarget(__scripted, out __side, out __index))
+            {
+                isTurnPlayer = __side;
+                permanentIndex = __index;
+            }
+            else
+            {
+                // -2 = decline, -1 = the player / security. The side bit is
+                // meaningless for -2 and, for -1, names the seat being
+                // attacked -- which is the non-turn player, since attacks only
+                // happen on the attacker's own turn.
+                isTurnPlayer = false;
+                permanentIndex = __scripted;
+            }
+        }
+
         // [Recording mod] attack-target pick. -2 = decline, -1 = player/security
         // (recorded as frame -1); otherwise the compact battle-area index,
         // which is what our action space targets (see ActionEncoder.ValidateFieldSlot).

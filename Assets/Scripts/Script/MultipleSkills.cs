@@ -433,6 +433,23 @@ public class MultipleSkills : MonoBehaviourPunCallbacks
     [PunRPC]
     public void SetTargetSkill(int playerID, int skillIndex)
     {
+        // [Harness mod - phase 2] A scripted line answers here, before the
+        // recorder sees anything, so the recorded row carries what the script
+        // asked for rather than the value the AI computed and we discard.
+        // A false return is never "the script declined" -- TryAnswer has
+        // already aborted the job on a mismatch -- so do not fall through.
+        if (Digimon.Harness.InputDriver.IsActive)
+        {
+            int __scripted;
+            if (!Digimon.Harness.InputDriver.TryAnswer(
+                    playerID, Digimon.Harness.InputDriver.KindMultipleSkills,
+                    1, null, out __scripted))
+            {
+                return;
+            }
+            skillIndex = __scripted;
+        }
+
         // [Recording mod] trigger-order / multi-effect choice.
         Digimon.Recording.GameRecorder.Instance?.LogSelectionRow(
             playerID, "MultipleSkills", GManager.instance?.turnStateMachine?.gameContext?.TurnPhase.ToString() ?? "Unknown", intValue: skillIndex);

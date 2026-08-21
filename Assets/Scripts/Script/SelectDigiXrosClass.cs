@@ -1031,6 +1031,23 @@ public class SelectDigiXrosClass : MonoBehaviourPunCallbacks
     [PunRPC]
     public void SetTargetDigiXrossIndex(int playerID, int targetIndex)
     {
+        // [Harness mod - phase 2] A scripted line answers here, before the
+        // recorder sees anything, so the recorded row carries what the script
+        // asked for rather than the value the AI computed and we discard.
+        // A false return is never "the script declined" -- TryAnswer has
+        // already aborted the job on a mismatch -- so do not fall through.
+        if (Digimon.Harness.InputDriver.IsActive)
+        {
+            int __scripted;
+            if (!Digimon.Harness.InputDriver.TryAnswer(
+                    playerID, Digimon.Harness.InputDriver.KindSelectDigiXros,
+                    1, null, out __scripted))
+            {
+                return;
+            }
+            targetIndex = __scripted;
+        }
+
         // [Recording mod] zone choice: 0=Hand 1=Field 2=Trash 3=TamerSources 4=End.
         // `mechanic` is always "digixros" here -- this RPC exists solely for
         // DigiXros's own "which area will you select from?" prompt -- kept

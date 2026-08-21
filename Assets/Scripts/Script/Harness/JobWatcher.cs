@@ -99,6 +99,20 @@ namespace Digimon.Harness
             {
                 TouchHeartbeat();
 
+                // [Harness mod - phase 2] Drain a mid-game abort request.
+                // AbortCurrentJob only raises a flag, from whatever coroutine
+                // or RPC noticed the problem; the filing + scene reload happen
+                // here so they run from the poll loop like every other job
+                // transition, never from inside a selection RPC that is still
+                // unwinding.
+                if (_abortRequested && CurrentJob != null)
+                {
+                    _abortRequested = false;
+                    string reason = _abortReason;
+                    _abortReason = null;
+                    FailRunningJob(reason);
+                }
+
                 if (CurrentJob == null && DcgoReady)
                 {
                     TryClaimAndStart();
@@ -247,6 +261,11 @@ namespace Digimon.Harness
 
             CardObjectController.HarnessDeckOverrideP0 = p0;
             CardObjectController.HarnessDeckOverrideP1 = p1;
+            // [Harness mod - phase 2] The fixed initial draw order, per seat.
+            // Consumed by the two deck short-circuits in CardObjectController;
+            // an empty array leaves the shuffle alone.
+            CardObjectController.HarnessDeckOrderP0 = job.deck_order.p0;
+            CardObjectController.HarnessDeckOrderP1 = job.deck_order.p1;
             // [Harness mod - D2] Mark overrides as installed for this claim
             // attempt (deck overrides above; isAI / Time.timeScale below) so
             // ClearOverrides knows there is something to release. Set as soon
@@ -317,6 +336,13 @@ namespace Digimon.Harness
             Debug.Log("[Harness] job " + job.job_id + " early-seeded GameRandom with seed=" + job.seed);
 
             Time.timeScale = HarnessConfig.TimeScale;
+
+            // [Harness mod - phase 2] Install the scripted line, if this job
+            // carries one. A no-op for `policy: "ai"` jobs, which is every
+            // phase-1 job -- InputDriver.IsActive stays false and none of the
+            // interception sites do anything.
+            InputDriver.Install(job);
+
             return true;
         }
 
@@ -352,6 +378,52 @@ namespace Digimon.Harness
         {
             CurrentJob = null;
             ClaimedPath = null;
+        }
+
+        /// <summary>
+        /// Abandon the running job and file it as failed. Used when the harness
+        /// discovers mid-game that it cannot honor the job's contract -- a deck
+        /// stack that will not resolve, or a scripted prompt mismatch.
+        /// </summary>
+        /// <remarks>
+        /// [Harness mod - phase 2] Deliberately distinct from the turn-cap path
+        /// in <see cref="NotifyTurnStarted"/>, which files a usable "partial".
+        /// A job aborted here produced a game that answers a DIFFERENT question
+        /// than the one asked, so its recording must never be triaged as
+        /// evidence.
+        ///
+        /// Only raises a flag. The actual filing runs from PollLoop
+        /// (see the drain block there) so a scene reload never happens while a
+        /// selection RPC is still on the stack.
+        /// </remarks>
+        public void AbortCurrentJob(string reason)
+        {
+            if (CurrentJob == null) return;
+            Debug.LogError("[Harness] aborting job " + CurrentJob.job_id + ": " + reason);
+            _abortReason = reason;
+            _abortRequested = true;
+        }
+
+        private static bool _abortRequested;
+        private static string _abortReason;
+
+        /// <summary>
+        /// File the running job as failed and reload, so the poll loop claims
+        /// the next one instead of leaving the aborted game running.
+        /// </summary>
+        private void FailRunningJob(string reason)
+        {
+            // FileResult writes the result sidecar (outcome "failed" plus the
+            // reason), moves the claimed job file out of claimed/, and clears
+            // CurrentJob on every exit path -- the same release the success
+            // path uses. It is preferred over Fail() here because Fail() files
+            // no result sidecar, and a mismatch reason that never reaches disk
+            // is a finding nobody can read.
+            JobResultWriter.FileResult("failed", _turnsSeen, reason);
+            InputDriver.Release();
+            ClearOverrides();
+            _turnsSeen = 0;
+            SceneManager.LoadScene("BattleScene");
         }
 
         /// <summary>
@@ -406,7 +478,21 @@ namespace Digimon.Harness
 
             CardObjectController.HarnessDeckOverrideP0 = null;
             CardObjectController.HarnessDeckOverrideP1 = null;
+            CardObjectController.HarnessDeckOrderP0 = null;
+            CardObjectController.HarnessDeckOrderP1 = null;
             Time.timeScale = 1f;
+
+            // [Harness mod - phase 2] Release the scripted line with everything
+            // else. A line that outlived its job would start answering the
+            // next job's prompts -- or a human-started game's.
+            InputDriver.Release();
+
+            // [Harness mod - phase 2] Close the state sidecar too. The normal
+            // path closes it from GameRecorder.LogGameEnd, but an aborted job
+            // reloads the scene without ever reaching LogGameEnd, which would
+            // leave the handle open and the file looking still-in-progress to
+            // the Rust differ. Close() is a no-op when nothing is open.
+            StateDumper.Close();
 
             // isAI is what makes GManager treat the session as a bot game, and
             // it lives on the DontDestroyOnLoad ContinuousController, so it

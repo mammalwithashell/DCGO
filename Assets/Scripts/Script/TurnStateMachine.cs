@@ -696,6 +696,24 @@ public class TurnStateMachine : MonoBehaviourPunCallbacks
             return;
         }
 
+        // [Harness mod - phase 2] A scripted line answers here, before the
+        // recorder sees anything, so the recorded row carries what the script
+        // asked for rather than the value the AI computed and we discard.
+        // A false return is never "the script declined" -- TryAnswer has
+        // already aborted the job on a mismatch -- so do not fall through.
+        // 0 = keep, 1 = redraw, matching ActionEncoder.EncodeMulligan.
+        if (Digimon.Harness.InputDriver.IsActive)
+        {
+            int __scripted;
+            if (!Digimon.Harness.InputDriver.TryAnswer(
+                    playerID, Digimon.Harness.InputDriver.KindMulligan,
+                    1, null, out __scripted))
+            {
+                return;
+            }
+            isRedraw = __scripted != 0;
+        }
+
         // [Recording mod] capture the mulligan decision. Hooked here (the
         // [PunRPC] target) so all three callers — direct, _RPC-wrapped, and
         // the bot's RandomUtility path — funnel through one logging point.
@@ -1052,6 +1070,31 @@ public class TurnStateMachine : MonoBehaviourPunCallbacks
         if (selectionPlayer == null)
         {
             return;
+        }
+
+        // [Harness mod - phase 2] A scripted line answers here, before the
+        // recorder sees anything, so the recorded row carries what the script
+        // asked for rather than the value the AI computed and we discard.
+        // A false return is never "the script declined" -- TryAnswer has
+        // already aborted the job on a mismatch -- so do not fall through.
+        //
+        // The scripted value is the ENGINE action id the recorder writes on
+        // this row, not a bare bool: PASS (62) declines, HATCH (60) and
+        // MOVE_FROM_BREEDING (61) both mean "do the breeding action" and DCGO
+        // picks between them from CanHatch. Keeping the scripted vocabulary
+        // equal to the recorded vocabulary is the whole point of this seam --
+        // but note the consequence: scripting HATCH when DCGO cannot hatch
+        // silently performs a MOVE instead, and the recorded row will say so.
+        if (Digimon.Harness.InputDriver.IsActive)
+        {
+            int __scripted;
+            if (!Digimon.Harness.InputDriver.TryAnswer(
+                    playerID, Digimon.Harness.InputDriver.KindBreedingAction,
+                    1, null, out __scripted))
+            {
+                return;
+            }
+            doBreeding = __scripted != Digimon.Recording.ActionSpace.PASS;
         }
 
         // [Recording mod] this [PunRPC] is the single chokepoint for EVERY
@@ -3429,6 +3472,64 @@ public class TurnStateMachine : MonoBehaviourPunCallbacks
     #region Queue Main Phase Action
     public void QueueMainPhaseAction(Player player, MainPhaseAction action)
     {
+        // [Harness mod - phase 2] A scripted line replaces the action the AI
+        // chose, before the recorder sees it, so the recorded row carries what
+        // the script asked for. A false return is never "the script declined"
+        // -- TryAnswer has already aborted the job on a mismatch -- so do not
+        // fall through.
+        //
+        // Unlike the selection RPCs, this site does not take a scalar: it
+        // takes a serialized MainPhaseAction packet, so the scripted 2192-space
+        // id has to be decoded back into one. InputDriver.BuildMainPhaseAction
+        // is that partial inverse of ActionEncoder, and it covers only the six
+        // families a queued action can name. An id outside them aborts the job
+        // rather than quietly queueing something else.
+        //
+        // !! KNOWN GAP -- this hook DOES NOT FIRE UNDER THE HARNESS. !!
+        // QueueMainPhaseAction is the HUMAN-UI path. MainPhase()'s wait loop
+        // only dequeues main-phase actions under `!IsAI || TurnPlayer.isYou`
+        // (~line 1266); a harness game is `IsAI && isAuto`, so both seats take
+        // the AI brain at ~line 1291, which never queues an action -- it sets
+        // the PlayCard / TargetFrameID / AttackingPermanent / DefendingPermanent
+        // / UseCardEffect fields directly and the shared processing consumes
+        // them. The recorder says so itself in the mirror block at ~line 1526
+        // ("The AI never routes through QueueMainPhaseAction"), which is
+        // precisely why that mirror block exists.
+        //
+        // So `main_phase` is not yet scriptable. The real seam is the mirror
+        // block: immediately before it, the decision fields hold the AI's
+        // finalized choice for this loop iteration, and overwriting them there
+        // would make the recorder log the scripted action -- the same
+        // driver-hooks-where-the-recorder-hooks property the selection RPCs
+        // have. Doing that needs a decoder to the FIELDS rather than to a
+        // MainPhaseAction, plus care with the block's per-iteration
+        // double-log memo, and it cannot inject a decision the AI did not
+        // reach at all. Left for a follow-up rather than half-built here.
+        //
+        // The hook below is still correct for the paths that DO queue actions
+        // (CheckCardPanel hand-effect activation, NextPhaseButton's pass, and
+        // the UI drag/click handlers), so it is kept rather than deleted.
+        if (player != null && Digimon.Harness.InputDriver.IsActive)
+        {
+            int __scripted;
+            if (!Digimon.Harness.InputDriver.TryAnswer(
+                    player.PlayerID, Digimon.Harness.InputDriver.KindMainPhase,
+                    -1, null, out __scripted))
+            {
+                return;
+            }
+            string __err;
+            MainPhaseAction __replacement =
+                Digimon.Harness.InputDriver.BuildMainPhaseAction(__scripted, player, out __err);
+            if (__replacement == null)
+            {
+                Digimon.Harness.InputDriver.Abort(
+                    "cannot build main-phase action " + __scripted + ": " + __err);
+                return;
+            }
+            action = __replacement;
+        }
+
         // [Recording mod] capture before RPC dispatch so both online and
         // offline-bot paths route through the same logging chokepoint.
         // The null-conditional access means the mod is a no-op when absent.
