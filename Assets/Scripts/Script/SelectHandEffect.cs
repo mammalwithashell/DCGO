@@ -781,6 +781,14 @@ public class SelectHandEffect : MonoBehaviourPunCallbacks
     {
         // [Recording mod] hand picks arrive as ActiveCardList indices; record
         // card identities (order = selection order). null = decline.
+        // `mechanic`: this class is only ever used for DigiXros hand material
+        // selection (Assembly never draws from hand) alongside many unrelated
+        // hand prompts (discard, put-to-library, etc.), so `_digiXros` --
+        // set by SetDigiXros() before Activate() ever ran -- disambiguates.
+        // `zone` is always "Hand": the class name already implies it, kept
+        // here only for schema symmetry with SelectCardEffect/
+        // SelectPermanentEffect's rows.
+        string __mechanic = _digiXros ? "digixros" : null;
         {
             var __gc = GManager.instance?.turnStateMachine?.gameContext;
             var __rec = Digimon.Recording.GameRecorder.Instance;
@@ -788,7 +796,8 @@ public class SelectHandEffect : MonoBehaviourPunCallbacks
             {
                 if (CardIDs == null)
                 {
-                    __rec.LogSelectionRow(playerID, "SelectHandEffect", __gc.TurnPhase.ToString(), cancel: true);
+                    __rec.LogSelectionRow(playerID, "SelectHandEffect", __gc.TurnPhase.ToString(), cancel: true,
+                        mechanic: __mechanic, zone: "Hand");
                 }
                 else
                 {
@@ -796,7 +805,8 @@ public class SelectHandEffect : MonoBehaviourPunCallbacks
                     foreach (int __ci in CardIDs)
                         if (__ci >= 0 && __ci < __gc.ActiveCardList.Count)
                             __ids.Add(__gc.ActiveCardList[__ci]?.CardID ?? "");
-                    __rec.LogSelectionRow(playerID, "SelectHandEffect", __gc.TurnPhase.ToString(), cardIds: __ids);
+                    __rec.LogSelectionRow(playerID, "SelectHandEffect", __gc.TurnPhase.ToString(), cardIds: __ids,
+                        mechanic: __mechanic, zone: "Hand");
                 }
             }
         }

@@ -40,6 +40,11 @@ namespace Digimon.Recording
     ///                        <c>step</c> (and <c>actor</c>) with the preceding
     ///                        `action` row. See <see cref="LogActionResolution"/>.
     ///   <c>selection</c>   — a semantic selection answer; also carries <c>memory</c>
+    ///                        and, when the calling prompt can determine them
+    ///                        cheaply, the optional diagnostic
+    ///                        <c>mechanic</c> ("assembly"/"digixros"/absent)
+    ///                        and <c>zone</c> ("Trash"/"Hand"/"BattleArea"/
+    ///                        "Custom"/...) fields — see <see cref="LogSelectionRow"/>.
     ///   <c>initial_state</c> — (added post-v1, optional) post-mulligan zone snapshot,
     ///                        emitted once per game — see <see cref="LogInitialState"/>
     ///   <c>encoder_failure</c> — sentinel for decisions the encoder cannot yet map
@@ -546,6 +551,25 @@ namespace Digimon.Recording
         /// `targets` are (absolutePlayerId, dcgoFrameId) pairs; frame -1
         /// means "the player / security" (attack-target sentinel).
         /// </summary>
+        /// <param name="mechanic">[Recording mod] Which alt-cost mechanic this
+        /// selection belongs to — "assembly" or "digixros" — read from the
+        /// SAME `_isAssembly`/`_isDigiXros`-family flag the calling
+        /// `Select*Effect` instance already tracks for its own UI text
+        /// (<c>SelectCardEffect.SetAssembly</c>/<c>SetDigiXros</c>,
+        /// <c>SelectHandEffect.SetDigiXros</c>,
+        /// <c>SelectPermanentEffect.SetDigiXros</c>). <c>null</c> when the
+        /// prompt is unrelated to either mechanic — the overwhelming
+        /// majority of `SelectCardEffect`/`SelectHandEffect`/
+        /// `SelectPermanentEffect` calls, which serve dozens of other card
+        /// effects (bounce, discard, security look, etc.) that reuse the
+        /// same selector classes.</param>
+        /// <param name="zone">[Recording mod] The zone this selection drew
+        /// its candidates from (e.g. "Trash", "Hand", "BattleArea",
+        /// "Custom"), when the call site can name it cheaply — either the
+        /// caller's own `_root` (`SelectCardEffect`) or a fixed literal for
+        /// selector classes scoped to a single zone
+        /// (`SelectHandEffect`="Hand", `SelectPermanentEffect`="BattleArea").
+        /// <c>null</c> when not cheaply determinable at this hook.</param>
         public void LogSelectionRow(int actorPlayerId, string prompt, string phaseName,
                                     IList<KeyValuePair<int, int>> targets = null,
                                     IList<string> cardIds = null,
@@ -554,7 +578,9 @@ namespace Digimon.Recording
                                     IList<int> candidates = null,
                                     long? intValue = null,
                                     bool? boolValue = null,
-                                    bool cancel = false)
+                                    bool cancel = false,
+                                    string mechanic = null,
+                                    string zone = null)
         {
             if (!_gameInProgress || _writer == null) return;
             var sb = new StringBuilder(192);
@@ -604,6 +630,8 @@ namespace Digimon.Recording
             if (intValue.HasValue)  { sb.Append(',').Append("\"int_value\":").Append(intValue.Value); }
             if (boolValue.HasValue) { sb.Append(','); AppendKv(sb, "bool_value", boolValue.Value); }
             if (cancel)             { sb.Append(','); AppendKv(sb, "cancel", true); }
+            if (mechanic != null)   { sb.Append(','); AppendKv(sb, "mechanic", mechanic); }
+            if (zone != null)       { sb.Append(','); AppendKv(sb, "zone", zone); }
             AppendMemory(sb);
             AppendBoards(sb);
             sb.Append('}');

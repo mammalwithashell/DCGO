@@ -1032,8 +1032,15 @@ public class SelectDigiXrosClass : MonoBehaviourPunCallbacks
     public void SetTargetDigiXrossIndex(int playerID, int targetIndex)
     {
         // [Recording mod] zone choice: 0=Hand 1=Field 2=Trash 3=TamerSources 4=End.
+        // `mechanic` is always "digixros" here -- this RPC exists solely for
+        // DigiXros's own "which area will you select from?" prompt -- kept
+        // for schema symmetry with the mechanic tag on the material-pick
+        // rows this precedes (SelectHandEffect/SelectPermanentEffect/
+        // SelectCardEffect). No `zone`: this row IS the zone declaration
+        // (as `int_value`), not a pick made within one.
         Digimon.Recording.GameRecorder.Instance?.LogSelectionRow(
-            playerID, "SelectDigiXrosClass", GManager.instance?.turnStateMachine?.gameContext?.TurnPhase.ToString() ?? "Unknown", intValue: targetIndex);
+            playerID, "SelectDigiXrosClass", GManager.instance?.turnStateMachine?.gameContext?.TurnPhase.ToString() ?? "Unknown",
+            intValue: targetIndex, mechanic: "digixros");
 
         Player selectionPlayer = GManager.instance.GetPlayerFromID(playerID);
 

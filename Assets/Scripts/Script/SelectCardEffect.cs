@@ -851,7 +851,17 @@ public class SelectCardEffect : MonoBehaviourPunCallbacks
     public void SetTargetCardAndIndicies(int playerID, int[] CardIDs, int[] Indicies)
     {
         // [Recording mod] panel picks: card identities + display-order indexes.
-        // Empty/null = decline ("Not Select").
+        // Empty/null = decline ("Not Select"). `mechanic`/`zone` tag this row
+        // as an Assembly/DigiXros material declaration when it is one --
+        // this same RPC also serves dozens of unrelated SelectCardEffect
+        // prompts (bounce, discard, security look, ...), so the caller's own
+        // `_isAssembly`/`_isDigiXros`/`_root` (set by SetAssembly()/
+        // SetDigiXros()/SetUp() before Activate() ever ran) is the cheapest
+        // place to disambiguate -- valid for both the accept and the
+        // decline-to-0 branch below, since those flags don't depend on the
+        // outcome.
+        string __mechanic = _isAssembly ? "assembly" : (_isDigiXros ? "digixros" : null);
+        string __zone = _root.ToString();
         {
             var __gc = GManager.instance?.turnStateMachine?.gameContext;
             var __rec = Digimon.Recording.GameRecorder.Instance;
@@ -859,7 +869,8 @@ public class SelectCardEffect : MonoBehaviourPunCallbacks
             {
                 if (CardIDs == null || CardIDs.Length == 0)
                 {
-                    __rec.LogSelectionRow(playerID, "SelectCardEffect", __gc.TurnPhase.ToString(), cancel: true);
+                    __rec.LogSelectionRow(playerID, "SelectCardEffect", __gc.TurnPhase.ToString(), cancel: true,
+                        mechanic: __mechanic, zone: __zone);
                 }
                 else
                 {
@@ -868,7 +879,7 @@ public class SelectCardEffect : MonoBehaviourPunCallbacks
                         if (__ci >= 0 && __ci < __gc.ActiveCardList.Count)
                             __ids.Add(__gc.ActiveCardList[__ci]?.CardID ?? "");
                     __rec.LogSelectionRow(playerID, "SelectCardEffect", __gc.TurnPhase.ToString(),
-                        cardIds: __ids, indexes: Indicies);
+                        cardIds: __ids, indexes: Indicies, mechanic: __mechanic, zone: __zone);
                 }
             }
         }

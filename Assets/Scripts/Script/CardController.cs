@@ -358,19 +358,33 @@ public class PlayCardClass
     ///         possible modifier source.</item>
     /// </list>
     ///
-    /// IMPORTANT ASYMMETRY FOR THE INVESTIGATION THIS SUPPORTS: Assembly and
-    /// DigiXros material selection is driven by <c>SelectCardEffect</c>'s own
-    /// <c>SetTargetCardAndIndicies</c> RPC (see <c>SelectAssemblyClass.
-    /// SelectTrashCard</c> / <c>SelectDigiXrosClass</c>) -- a chokepoint
-    /// entirely OUTSIDE GameRecorder's existing hooks (QueueMainPhaseAction /
-    /// SetRedraw / StartGame / EndGame / UserSelectionManager.SetIntForPlayer
-    /// / SetBoolForPlayer). The player DOES see and act on a real selection
-    /// prompt in-game for these, but prior to this change NO selection row
-    /// was ever recorded for it -- the JSONL stream was silent on it. This
-    /// is exactly the "cost reduction path with no [recorded] prompt" the
-    /// investigation asked to identify; <c>materials</c> here is the fix,
-    /// carried on the resolved action_detail row instead of as its own
-    /// (unbuilt) selection-row chokepoint.
+    /// CORRECTION (2026-08-21, assembly-selection-recorder-hook
+    /// investigation): an earlier revision of this doc comment claimed
+    /// Assembly/DigiXros material selection -- driven by
+    /// <c>SelectCardEffect</c>'s own <c>SetTargetCardAndIndicies</c> RPC
+    /// (see <c>SelectAssemblyClass.SelectTrashCard</c> /
+    /// <c>SelectDigiXrosClass</c>) -- sat entirely outside every existing
+    /// <c>GameRecorder</c> hook, and that <c>materials</c> below was the
+    /// only record of that prompt ever produced. That claim was WRONG: Task
+    /// 3.5 (<c>5b1284ded</c>, landed 2026-08-16 -- five days before this
+    /// doc comment was written) already instruments
+    /// <c>SetTargetCardAndIndicies</c> (and <c>SelectHandEffect</c>'s /
+    /// <c>SelectPermanentEffect</c>'s equivalent RPCs, and
+    /// <c>SelectDigiXrosClass.SetTargetDigiXrossIndex</c>'s own zone-choice
+    /// RPC) with a <c>GameRecorder.LogSelectionRow</c> call, on the AI path
+    /// too (<c>Activate()</c>'s <c>GManager.instance.IsAI</c> branch /
+    /// <c>Digimon.Harness.HarnessAuto.DrivesLocalSeat</c> routing). The
+    /// player's individual material CHOICE was already a real
+    /// <c>selection</c> row before this file's <c>materials</c> field
+    /// existed; <c>materials</c> here is a genuinely separate, complementary
+    /// thing -- the RESOLVED outcome (final material set + cost actually
+    /// paid) surfaced once, correlated to the `action` row, instead of
+    /// requiring a reader to reconstruct it from the preceding `selection`
+    /// row(s). Those `selection` rows now also carry optional `mechanic`
+    /// ("assembly"/"digixros") and `zone` ("Trash"/"Hand"/"BattleArea"/...)
+    /// tags (see <c>GameRecorder.LogSelectionRow</c>) so a reader can
+    /// identify an Assembly/DigiXros material-choice row without having to
+    /// infer it from prompt name + timing alone.
     /// </summary>
     private (string altPath, List<string> materials) DetermineAltPath(
         CardSource card, bool isEvolution, List<Permanent> targetPermanents, int baseCost, int Cost)

@@ -1049,6 +1049,13 @@ public class SelectPermanentEffect : MonoBehaviourPunCallbacks
         // confirm; else compact battle-area indexes, which is what our action
         // space targets (see ActionEncoder.ValidateFieldSlot). The turn-relative
         // bit is resolved to an absolute player id.
+        // `mechanic`: this class serves DigiXros battle-area/tamer-source
+        // material selection alongside many unrelated permanent prompts
+        // (attack targets, effect targets, etc.), so `_isdigiXros` -- set by
+        // SetDigiXros() before Activate() ever ran -- disambiguates. Assembly
+        // never selects a Permanent (trash-only), so there is no
+        // `_isAssembly` analogue on this class.
+        string __mechanic = _isdigiXros ? "digixros" : null;
         {
             var __gc = GManager.instance?.turnStateMachine?.gameContext;
             var __rec = Digimon.Recording.GameRecorder.Instance;
@@ -1056,7 +1063,8 @@ public class SelectPermanentEffect : MonoBehaviourPunCallbacks
             {
                 if (isTurnPlayer == null || UnitIndex == null)
                 {
-                    __rec.LogSelectionRow(playerID, "SelectPermanentEffect", __gc.TurnPhase.ToString(), cancel: true);
+                    __rec.LogSelectionRow(playerID, "SelectPermanentEffect", __gc.TurnPhase.ToString(), cancel: true,
+                        mechanic: __mechanic, zone: "BattleArea");
                 }
                 else
                 {
@@ -1067,7 +1075,8 @@ public class SelectPermanentEffect : MonoBehaviourPunCallbacks
                         int __frame = Digimon.Recording.ActionEncoder.ValidateFieldSlot(__p, UnitIndex[__i]);
                         __targets.Add(new System.Collections.Generic.KeyValuePair<int, int>(__p.PlayerID, __frame));
                     }
-                    __rec.LogSelectionRow(playerID, "SelectPermanentEffect", __gc.TurnPhase.ToString(), targets: __targets);
+                    __rec.LogSelectionRow(playerID, "SelectPermanentEffect", __gc.TurnPhase.ToString(), targets: __targets,
+                        mechanic: __mechanic, zone: "BattleArea");
                 }
             }
         }
