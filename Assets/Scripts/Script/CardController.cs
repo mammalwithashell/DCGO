@@ -306,6 +306,137 @@ public class PlayCardClass
         return null;
     }
 
+    #region [Recording mod] alt-path detection for GameRecorder diagnostics
+
+    /// <summary>
+    /// Identify which alternate path (if any) produced the FINAL <c>Cost</c>
+    /// paid for <paramref name="card"/>, and the materials placed/used for
+    /// it, for <see cref="Digimon.Recording.GameRecorder.LogActionResolution"/>.
+    /// Called from the "pay cost" region of <see cref="PlayCard"/>, AFTER
+    /// "select DigiXros" / "select Assembly" have already run and AFTER
+    /// <c>Cost</c> is its final value (<c>GetPayingCostWithBaseCost</c> has
+    /// already folded every one of these into it — see <c>CardSource.cs</c>
+    /// "cost that will be paid taking into account baseCost").
+    ///
+    /// Verified against the actual reduction conditions each mechanic's cost
+    /// formula tests (not guessed at):
+    /// <list type="bullet">
+    ///   <item><b>dna_digivolve</b> — <see cref="isJogress"/>. Materials: the
+    ///         two tributing permanents' top cards (<c>targetPermanents</c>
+    ///         holds both jogress roots for a jogress play — see "Set
+    ///         target(s)" above).</item>
+    ///   <item><b>burst</b> — <see cref="IsBurst"/>. Materials: the bounced
+    ///         tamer (<see cref="BurstTamer"/>).</item>
+    ///   <item><b>app_fusion</b> — <see cref="IsAppFusion"/>. Materials: the
+    ///         linked card (<see cref="LinkedCard"/>).</item>
+    ///   <item><b>digixros</b> — mirrors the exact gate
+    ///         <c>CardSource.GetPayingCostWithBaseCost</c>'s "DigiXros" region
+    ///         checks before subtracting
+    ///         <c>selectedDigicrossCards.Count * reduceCostPerCard</c>:
+    ///         <c>card.HasDigiXros &amp;&amp; !isEvolution &amp;&amp;
+    ///         selectDigiXrosClass.playCard == card &amp;&amp;
+    ///         selectedDigicrossCards.Count &gt; 0</c>. Materials: the
+    ///         selected cards.</item>
+    ///   <item><b>assembly</b> — mirrors the exact gate the "Assembly" region
+    ///         checks before subtracting <c>assemblyCondition.reduceCost</c>:
+    ///         <c>card.HasAssembly &amp;&amp; !isEvolution &amp;&amp;
+    ///         selectAssemblyClass.playCard == card &amp;&amp;
+    ///         selectedAssemblyCards.Count == card.assemblyCondition.elementCount</c>
+    ///         (the full match DCGO itself requires — a partial selection
+    ///         does NOT reduce cost in production, so it must not be
+    ///         mislabeled "assembly" here either). Materials: the selected
+    ///         cards.</item>
+    ///   <item><b>cost_modifier</b> — none of the above applied, but
+    ///         <c>Cost != baseCost</c> anyway. Catches passive/continuous
+    ///         cost-changing effects that route through
+    ///         <c>GetChangedCostItselef</c> / <c>GetChangedPayingCost</c> /
+    ///         <c>SetReducedCost</c> (e.g. <c>ChangeCostClass</c>-based card
+    ///         effects like BT1-109) — mechanisms that, unlike Assembly/
+    ///         DigiXros, run with NO player-facing selection UI at all, so
+    ///         there is no specific "materials" to report. Best-effort: this
+    ///         is a catch-all label, not a verified enumeration of every
+    ///         possible modifier source.</item>
+    /// </list>
+    ///
+    /// IMPORTANT ASYMMETRY FOR THE INVESTIGATION THIS SUPPORTS: Assembly and
+    /// DigiXros material selection is driven by <c>SelectCardEffect</c>'s own
+    /// <c>SetTargetCardAndIndicies</c> RPC (see <c>SelectAssemblyClass.
+    /// SelectTrashCard</c> / <c>SelectDigiXrosClass</c>) -- a chokepoint
+    /// entirely OUTSIDE GameRecorder's existing hooks (QueueMainPhaseAction /
+    /// SetRedraw / StartGame / EndGame / UserSelectionManager.SetIntForPlayer
+    /// / SetBoolForPlayer). The player DOES see and act on a real selection
+    /// prompt in-game for these, but prior to this change NO selection row
+    /// was ever recorded for it -- the JSONL stream was silent on it. This
+    /// is exactly the "cost reduction path with no [recorded] prompt" the
+    /// investigation asked to identify; <c>materials</c> here is the fix,
+    /// carried on the resolved action_detail row instead of as its own
+    /// (unbuilt) selection-row chokepoint.
+    /// </summary>
+    private (string altPath, List<string> materials) DetermineAltPath(
+        CardSource card, bool isEvolution, List<Permanent> targetPermanents, int baseCost, int Cost)
+    {
+        if (isJogress)
+        {
+            var materials = new List<string>();
+            foreach (Permanent p in targetPermanents)
+            {
+                string id = p?.TopCard?.CardID;
+                if (id != null) materials.Add(id);
+            }
+            return ("dna_digivolve", materials);
+        }
+
+        if (IsBurst(card))
+        {
+            var materials = new List<string>();
+            string tamerId = BurstTamer(card)?.TopCard?.CardID;
+            if (tamerId != null) materials.Add(tamerId);
+            return ("burst", materials);
+        }
+
+        if (IsAppFusion(card))
+        {
+            var materials = new List<string>();
+            string linkId = LinkedCard(card)?.CardID;
+            if (linkId != null) materials.Add(linkId);
+            return ("app_fusion", materials);
+        }
+
+        if (!isEvolution)
+        {
+            SelectDigiXrosClass selectDigiXrosClass = GManager.instance.GetComponent<SelectDigiXrosClass>();
+            if (card.HasDigiXros && selectDigiXrosClass != null && selectDigiXrosClass.playCard == card
+                && selectDigiXrosClass.selectedDigicrossCards.Count > 0)
+            {
+                var materials = selectDigiXrosClass.selectedDigicrossCards
+                    .Where(c => c != null && c.CardID != null)
+                    .Select(c => c.CardID)
+                    .ToList();
+                return ("digixros", materials);
+            }
+
+            SelectAssemblyClass selectAssemblyClass = GManager.instance.GetComponent<SelectAssemblyClass>();
+            if (card.HasAssembly && selectAssemblyClass != null && selectAssemblyClass.playCard == card
+                && selectAssemblyClass.selectedAssemblyCards.Count == card.assemblyCondition.elementCount)
+            {
+                var materials = selectAssemblyClass.selectedAssemblyCards
+                    .Where(c => c != null && c.CardID != null)
+                    .Select(c => c.CardID)
+                    .ToList();
+                return ("assembly", materials);
+            }
+        }
+
+        if (Cost != baseCost)
+        {
+            return ("cost_modifier", null);
+        }
+
+        return (null, null);
+    }
+
+    #endregion
+
     public IEnumerator PlayCard()
     {
         bool burstDigivolved = false;
@@ -999,6 +1130,19 @@ public class PlayCardClass
                 }
 
                 ContinuousController.instance.StartCoroutine(OffMemoryPredictionLine());
+
+                // [Recording mod] Fire right after the memory deduction so
+                // Cost/card/altPath/materials are all in their final, fully
+                // resolved state (Assembly/DigiXros selection already
+                // happened above at "select DigiXros"/"select Assembly";
+                // GetPayingCostWithBaseCost already folded them into Cost).
+                // This is the ONLY point in PlayCard() where memory is
+                // actually deducted -- see DetermineAltPath's doc for why
+                // this hook, not QueueMainPhaseAction, is authoritative for
+                // cost_paid/alt_path.
+                var (altPath, altMaterials) = DetermineAltPath(card, isEvolution, targetPermanents, baseCost, Cost);
+                Digimon.Recording.GameRecorder.Instance?.LogActionResolution(
+                    card.Owner.PlayerID, card.CardID, Cost, altPath, altMaterials);
             }
 
             #endregion

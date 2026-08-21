@@ -24,7 +24,21 @@ namespace Digimon.Recording
     /// Schema:
     ///   <c>game_start</c>  — header row, emitted once per game with both decks
     ///   <c>action</c>      — one row per decision, with <c>actor</c>, <c>action_id</c>, <c>phase</c>,
-    ///                        and (added post-v1, field is optional) <c>memory</c>
+    ///                        and (added post-v1, field is optional) <c>memory</c>.
+    ///                        (Diagnostic, optional) <c>card_id</c> — the physical
+    ///                        card this action references, resolved pre-dispatch;
+    ///                        <c>memory_before</c> — same read as <c>memory</c>, under
+    ///                        its own key. See <see cref="LogAction"/>.
+    ///   <c>action_detail</c> — (diagnostic, optional) the RESOLVED detail of the
+    ///                        most recent <c>action</c> row for the same actor+step
+    ///                        — <c>card_id</c>, <c>cost_paid</c>, <c>memory_after</c>,
+    ///                        <c>alt_path</c>, <c>materials</c>. A separate row (not
+    ///                        inline fields on the `action` row) because this data
+    ///                        genuinely isn't known until PlayCardClass.PlayCard()
+    ///                        actually pays the cost — after the `action` row is
+    ///                        already flushed to disk. Correlate via matching
+    ///                        <c>step</c> (and <c>actor</c>) with the preceding
+    ///                        `action` row. See <see cref="LogActionResolution"/>.
     ///   <c>selection</c>   — a semantic selection answer; also carries <c>memory</c>
     ///   <c>initial_state</c> — (added post-v1, optional) post-mulligan zone snapshot,
     ///                        emitted once per game — see <see cref="LogInitialState"/>
@@ -37,7 +51,8 @@ namespace Digimon.Recording
     /// the opponent. Always relative to the same fixed player for the whole
     /// recording, never to whoever is turn-player at that row, so a reader
     /// never has to re-derive whose favor a value means. Omitted entirely on
-    /// rows from older recorders (parses as absent, not zero).
+    /// rows from older recorders (parses as absent, not zero). The same
+    /// convention applies to <c>memory_before</c> / <c>memory_after</c>.
     ///
     /// See <c>openspec/changes/add-dcgo-recording-parity-harness/specs/dcgo-parity-harness/spec.md</c>
     /// and <c>docs/DCGO_RECORDING_SCHEMA.md</c> for the authoritative schema definition.
@@ -78,6 +93,22 @@ namespace Digimon.Recording
         private int _rowsSinceFlush;
         private bool _gameInProgress;
         private string _gameId;
+
+        // [Recording mod] Correlates a just-logged PlayCardAction `action` row
+        // to the `action_detail` row LogActionResolution emits once
+        // PlayCardClass.PlayCard() actually pays the cost (see that method's
+        // doc for why this can't simply be inline fields on the same row).
+        // -1 means "no resolution pending". Set in LogAction, consumed
+        // (read + cleared) by LogActionResolution. A single slot is correct
+        // because DCGO's turn flow is single-threaded and coroutine-driven:
+        // the player's own queued PlayCardAction always resolves (pays cost)
+        // before another QueueMainPhaseAction can be logged, so at most one
+        // top-level play is ever "in flight" at a time. Effect-driven internal
+        // PlayCardClass.PlayCard() calls (CardEffectCommons.cs — a card
+        // effect playing another card from trash/security/etc.) find this
+        // slot already consumed/absent and are correctly skipped.
+        private int _pendingResolutionStep = -1;
+        private int _pendingResolutionActor = -1;
 
         // ── Public API: lifecycle ─────────────────────────────────────────
 
@@ -131,6 +162,8 @@ namespace Digimon.Recording
             _stepIndex = 0;
             _rowsSinceFlush = 0;
             _gameInProgress = true;
+            _pendingResolutionStep = -1;
+            _pendingResolutionActor = -1;
             // [Harness mod] Reset before attempting to open this game's file.
             // Left as-is (NOT cleared) across LogGameEnd/CloseCurrentRecording
             // for the game that just finished -- JobResultWriter.FileResult
@@ -334,7 +367,30 @@ namespace Digimon.Recording
         {
             if (!_gameInProgress) return;
             var encoded = ActionEncoder.EncodeMainPhaseAction(actorPlayerId, action, actorPlayer);
-            EmitDecisionRow(actorPlayerId, encoded, phaseName, source: "main_phase");
+
+            // [Recording mod] card_id: the physical card this action
+            // references (play/digivolve card, activated hand card, activated
+            // permanent's top card). Resolvable synchronously here — before
+            // the photonView.RPC dispatch, same as everything else LogAction
+            // captures — because it only needs index lookups into the
+            // actor's OWN already-known hand/field, not the outcome of
+            // resolving the action. See ActionEncoder.ResolveCardId.
+            string cardId = ActionEncoder.ResolveCardId(action, actorPlayer);
+
+            if (action is PlayCardAction)
+            {
+                // [Recording mod] Arm the resolution-detail correlation slot
+                // BEFORE EmitDecisionRow bumps _stepIndex, so LogActionResolution
+                // (fired later, from CardController.PlayCardClass.PlayCard()
+                // once the cost is actually paid) can stamp its action_detail
+                // row with the SAME step as this action row. See the field's
+                // doc comment for why cost_paid/memory_after/alt_path can't be
+                // inline fields on this row instead.
+                _pendingResolutionStep = _stepIndex;
+                _pendingResolutionActor = actorPlayerId;
+            }
+
+            EmitDecisionRow(actorPlayerId, encoded, phaseName, source: "main_phase", cardId: cardId);
 
             // PlayCardAction can baked-in digivolution sources; surface them as
             // explicit subsequent rows so the replay stream stays faithful to
@@ -343,6 +399,96 @@ namespace Digimon.Recording
             {
                 EmitDecisionRow(actorPlayerId, extra, phaseName, source: "play_card_extra");
             }
+        }
+
+        /// <summary>
+        /// [Recording mod] Log the RESOLVED detail of the most recently logged
+        /// <c>PlayCardAction</c> row for <paramref name="actorPlayerId"/> — the
+        /// data that genuinely cannot be known until
+        /// <c>CardController.PlayCardClass.PlayCard()</c> actually pays the
+        /// cost (Assembly/DigiXros material selection, cost-modifying effects,
+        /// and the memory gauge afterward all resolve strictly AFTER
+        /// <c>LogAction</c> already wrote the pre-dispatch <c>action</c> row).
+        ///
+        /// Emits a SEPARATE <c>action_detail</c> row rather than mutating the
+        /// original row in place: <see cref="WriteRow"/> streams each row to
+        /// disk immediately (append-only <c>StreamWriter</c>, no buffering),
+        /// so by the time this data exists, the original row's line is
+        /// already flushed/written. Correlate the two rows via <c>step</c>
+        /// (this row's <c>step</c> equals the action row's <c>step</c>) and
+        /// <c>actor</c>.
+        ///
+        /// No-op — deliberately drops the call — when no PlayCardAction
+        /// resolution is currently pending for this actor (see
+        /// <see cref="_pendingResolutionStep"/>'s doc): that happens when
+        /// <c>PlayCardClass.PlayCard()</c> was invoked internally by a card
+        /// EFFECT (CardEffectCommons.cs has ~5 such call sites — e.g. "play a
+        /// card from your security/trash") rather than by the player's own
+        /// top-level queued action. This diagnostic round scopes to
+        /// player-facing decisions only, matching what the `action` rows
+        /// already record.
+        /// </summary>
+        /// <param name="actorPlayerId">The card's owner (<c>card.Owner.PlayerID</c>).</param>
+        /// <param name="cardId">The resolved card's printed ID — recorded here
+        /// too (in addition to the `action` row) as a same-source cross-check,
+        /// since this call site reads the actual <c>CardSource</c> instance
+        /// being played rather than re-deriving it from index lookups.</param>
+        /// <param name="costPaid">The memory actually deducted for this play —
+        /// <c>CardController.cs</c>'s local <c>Cost</c> at the
+        /// <c>AddMemory(-1 * Cost, ...)</c> call site. This is the value AFTER
+        /// any Assembly/DigiXros/DNA/Burst/AppFusion alternate-path reduction
+        /// or other cost-modifying effect — never the printed cost.</param>
+        /// <param name="altPath">One of "assembly", "digixros", "dna_digivolve",
+        /// "burst", "app_fusion", "cost_modifier" (a reduction/change from
+        /// some other effect not captured by the named paths), or null when
+        /// the ordinary path/cost applied. See
+        /// <c>CardController.PlayCardClass.DetermineAltPath</c> for exactly
+        /// which DCGO state each label reads.</param>
+        /// <param name="materials">Card IDs placed/used for the alt path
+        /// (Assembly/DigiXros trash materials, the two DNA digivolve partner
+        /// permanents' top cards, the Burst tamer, the AppFusion linked card).
+        /// Null/empty when not applicable or not identifiable (e.g.
+        /// "cost_modifier").</param>
+        public void LogActionResolution(int actorPlayerId, string cardId, int costPaid,
+                                        string altPath, IList<string> materials)
+        {
+            if (!_gameInProgress || _writer == null) return;
+            if (_pendingResolutionStep < 0 || _pendingResolutionActor != actorPlayerId)
+            {
+                // No correlated top-level action row pending for this actor —
+                // see method doc: an effect-driven internal play, not the
+                // player's own queued decision. Out of scope for this row.
+                return;
+            }
+
+            int step = _pendingResolutionStep;
+            // Consume the slot immediately so a second card paid for within
+            // the same PlayCardClass.PlayCard() call (CardSources.Count > 1 —
+            // rare; the top-level player action always constructs a
+            // single-element list) does not double-attach to this step.
+            _pendingResolutionStep = -1;
+            _pendingResolutionActor = -1;
+
+            var you = GManager.instance?.You;
+
+            var sb = new StringBuilder(192);
+            sb.Append('{');
+            AppendKv(sb, "type", "action_detail"); sb.Append(',');
+            AppendKv(sb, "step", step);            sb.Append(',');
+            AppendKv(sb, "actor", actorPlayerId);  sb.Append(',');
+            if (cardId != null) { AppendKv(sb, "card_id", cardId); sb.Append(','); }
+            AppendKv(sb, "cost_paid", costPaid);
+            if (you != null) { sb.Append(','); AppendKv(sb, "memory_after", you.MemoryForPlayer); }
+            if (altPath != null) { sb.Append(','); AppendKv(sb, "alt_path", altPath); }
+            if (materials != null && materials.Count > 0)
+            {
+                sb.Append(',');
+                AppendKvArray(sb, "materials", materials);
+            }
+            sb.Append('}');
+            WriteRow(sb.ToString());
+            // Deliberately does NOT increment _stepIndex -- this row annotates
+            // the step it references rather than being a new decision.
         }
 
         /// <summary>
@@ -467,7 +613,7 @@ namespace Digimon.Recording
         // ── Internals ─────────────────────────────────────────────────────
 
         private void EmitDecisionRow(int actor, ActionEncoder.Encoded encoded,
-                                     string phase, string source)
+                                     string phase, string source, string cardId = null)
         {
             var sb = new StringBuilder(160);
             sb.Append('{');
@@ -480,6 +626,10 @@ namespace Digimon.Recording
                 AppendKv(sb, "source", source);          sb.Append(',');
                 AppendKv(sb, "reason", encoded.FailureReason ?? "unknown"); sb.Append(',');
                 AppendKv(sb, "raw_value", encoded.RawDebugValue);
+                // [Recording mod] carried even on a failed encode -- knowing
+                // WHICH card the encoder choked on is valuable debug context
+                // and costs nothing extra (already resolved above).
+                if (cardId != null) { sb.Append(','); AppendKv(sb, "card_id", cardId); }
             }
             else
             {
@@ -489,7 +639,20 @@ namespace Digimon.Recording
                 AppendKv(sb, "action_id", encoded.ActionId);     sb.Append(',');
                 AppendKv(sb, "phase", phase ?? "");               sb.Append(',');
                 AppendKv(sb, "source", source);
+                // [Recording mod] card_id: the physical card this action
+                // references, when any (see ActionEncoder.ResolveCardId).
+                if (cardId != null) { sb.Append(','); AppendKv(sb, "card_id", cardId); }
                 AppendMemory(sb);
+                // [Recording mod] memory_before: identical read to "memory"
+                // above (both captured here, pre-dispatch) -- added under its
+                // own key so a reader never has to know that "memory" on an
+                // `action` row means "before this action" (true only because
+                // LogAction fires pre-dispatch) versus "memory" on a
+                // `selection` row, which is captured mid-resolution. Emitted
+                // ONLY here (not via the shared AppendMemory helper used by
+                // LogInitialState/LogSelectionRow too) to keep this addition
+                // scoped to `action` rows, per task.
+                AppendMemoryBefore(sb);
                 AppendBoards(sb);
             }
             sb.Append('}');
@@ -525,6 +688,29 @@ namespace Digimon.Recording
             if (you == null) return;
             sb.Append(',');
             AppendKv(sb, "memory", you.MemoryForPlayer);
+        }
+
+        /// <summary>
+        /// [Recording mod] Append <c>memory_before</c> — the exact same
+        /// perspective-converted gauge read as <see cref="AppendMemory"/>,
+        /// under its own key. Used only from <see cref="EmitDecisionRow"/>'s
+        /// `action` branch: since <c>LogAction</c> (the only caller that
+        /// reaches this) fires before the corresponding
+        /// <c>photonView.RPC</c> dispatch, this read genuinely IS "memory
+        /// before this action resolves" for an `action` row, whereas the
+        /// same read on a `selection`/`initial_state` row (via
+        /// <see cref="AppendMemory"/>) means something else (mid-resolution
+        /// state) -- hence a distinct helper instead of teaching
+        /// <see cref="AppendMemory"/> a second key everywhere it's called.
+        /// No-op (field omitted) when <c>GManager.instance.You</c> is
+        /// unavailable, same defensive pattern as <see cref="AppendMemory"/>.
+        /// </summary>
+        private static void AppendMemoryBefore(StringBuilder sb)
+        {
+            var you = GManager.instance?.You;
+            if (you == null) return;
+            sb.Append(',');
+            AppendKv(sb, "memory_before", you.MemoryForPlayer);
         }
 
         /// <summary>
@@ -612,6 +798,8 @@ namespace Digimon.Recording
                 _gameInProgress = false;
                 _stepIndex = 0;
                 _rowsSinceFlush = 0;
+                _pendingResolutionStep = -1;
+                _pendingResolutionActor = -1;
             }
         }
 

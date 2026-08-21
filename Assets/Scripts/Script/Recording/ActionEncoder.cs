@@ -387,6 +387,82 @@ namespace Digimon.Recording
             }
         }
 
+        // ── Resolved card identity (diagnostic fields) ──────────────────────
+
+        /// <summary>
+        /// [Recording mod] Resolve the printed card ID (e.g. "EX12-035") the
+        /// given <see cref="MainPhaseAction"/> references, when it references
+        /// exactly one physical card:
+        /// <list type="bullet">
+        ///   <item><see cref="PlayCardAction"/> — the card being played FROM
+        ///         HAND. Same card_id for a base play and a digivolve (the
+        ///         digivolve TARGET is a separate concept, already captured
+        ///         by the action's encoded slot / <see cref="DecomposePlayCardExtras"/>
+        ///         source-pick rows).</item>
+        ///   <item><see cref="ActivateCardAction"/> — the hand card whose
+        ///         effect is being activated.</item>
+        ///   <item><see cref="ActivatePermanentAction"/> — the field
+        ///         permanent's top card whose effect is being activated.</item>
+        /// </list>
+        /// Returns null for actions with no single card referent (Pass,
+        /// Attack, Cheat) or when the referenced index can't be resolved
+        /// (defensive; should not happen for a well-formed action).
+        ///
+        /// Pure: reads only <paramref name="action"/> and <paramref name="actor"/>
+        /// (the actor's own hand / own field), matching this class's existing
+        /// no-singleton discipline (see class remarks).
+        /// </summary>
+        public static string ResolveCardId(MainPhaseAction action, Player actor)
+        {
+            switch (action)
+            {
+                case PlayCardAction play:
+                    {
+                        int cardIndex = ReadField<int>(play, "CardIndex");
+                        return FindHandCardId(actor, cardIndex);
+                    }
+                case ActivateCardAction actCard:
+                    {
+                        int cardIndex = ReadField<int>(actCard, "CardIndex");
+                        return FindHandCardId(actor, cardIndex);
+                    }
+                case ActivatePermanentAction actPerm:
+                    {
+                        int permCompactIdx = ReadField<int>(actPerm, "PermanentIndex");
+                        if (actor == null) return null;
+                        var perms = actor.GetFieldPermanents();
+                        if (permCompactIdx < 0 || permCompactIdx >= perms.Count) return null;
+                        return perms[permCompactIdx]?.TopCard?.CardID;
+                    }
+                default:
+                    return null;
+            }
+        }
+
+        /// <summary>
+        /// Both <c>PlayCardAction.CardIndex</c> and
+        /// <c>ActivateCardAction.CardIndex</c> are indices into the per-game
+        /// <c>gameContext.ActiveCardList</c> (confirmed in
+        /// <c>TurnStateMachine.SetPlayCard</c> / <c>SetActCardSkill</c>), NOT
+        /// hand-slot positions — the same distinction <see cref="EncodePlayCard"/>
+        /// already navigates to compute <c>handSlot</c>. Resolve by matching
+        /// <c>CardSource.CardIndex</c> within the actor's own hand rather than
+        /// reading <c>gameContext.ActiveCardList</c> directly, so this stays
+        /// pure (actor-only, no GManager singleton read).
+        /// </summary>
+        private static string FindHandCardId(Player actor, int activeCardIndex)
+        {
+            if (actor == null) return null;
+            for (int i = 0; i < actor.HandCards.Count; i++)
+            {
+                if (actor.HandCards[i].CardIndex == activeCardIndex)
+                {
+                    return actor.HandCards[i].CardID;
+                }
+            }
+            return null;
+        }
+
         // ── Selections ────────────────────────────────────────────────────
 
         /// <summary>
