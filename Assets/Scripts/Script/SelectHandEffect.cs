@@ -487,11 +487,24 @@ public class SelectHandEffect : MonoBehaviourPunCallbacks
                     {
                         _noSelect = true;
 
+                        // [Harness mod] SetTargetHandCards enqueues onto the
+                        // per-player selection queue (Player.cs) rather than
+                        // overwriting a single field. This sweep tries
+                        // candidate sizes 0.._maxCount-1 and used to call
+                        // SetTargetHandCards once per size, relying on the
+                        // last write winning -- with a queue, that enqueued
+                        // up to _maxCount selections for one Activate() =
+                        // one dequeue, permanently desyncing every later
+                        // selection for this player (the Siriusmon EX12-018
+                        // hang: DequeuePlayerSelection<T> keeps pulling a
+                        // stale wrong-typed leftover off the front). Keep the
+                        // same "largest successful size wins" sweep, but
+                        // only enqueue once, after the sweep finishes.
+                        List<int> CardIDs = null;
+
                         for (int maxCount = 0; maxCount < _maxCount; maxCount++)
                         {
                             IList<int> indexList = Enumerable.Range(0, ValidCards.Count).ToList();
-
-                            List<int> CardIDs = null;
 
                             if (ValidCards.Count >= maxCount)
                             {
@@ -519,9 +532,9 @@ public class SelectHandEffect : MonoBehaviourPunCallbacks
                                     }
                                 }
                             }
+                        }
 
-                            SetTargetHandCards(_selectPlayer.PlayerID, CardIDs != null ? CardIDs.ToArray() : null);
-                        }  
+                        SetTargetHandCards(_selectPlayer.PlayerID, CardIDs != null ? CardIDs.ToArray() : null);
                     }
 
                     else
