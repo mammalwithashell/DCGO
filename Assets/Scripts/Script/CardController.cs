@@ -470,6 +470,19 @@ public class PlayCardClass
                 continue;
             }
 
+            // [Harness mod] Rule 7-1-2-3 (Comprehensive Rules Manual): "If a
+            // card can no longer be played after revealing it as part of the
+            // procedure for playing it, the revealed card is returned to its
+            // original location." Capture this card's hand slot BEFORE any
+            // of the reveal/cost/selection steps below run, so a rejected
+            // play (the "end play cards" region further down) can restore it
+            // there instead of CardObjectController.AddHandCards appending
+            // it to the back of the hand. -1 when the card didn't start this
+            // attempt in hand (e.g. played from trash/security/digivolution
+            // cards) -- rule 7-1-2-3's hand-position guarantee doesn't apply
+            // there, and downstream code only acts on this when it is >= 0.
+            int originalHandIndex = card.Owner.HandCards.IndexOf(card);
+
             #region Set Root
 
             ICardEffect CardEffect = null;
@@ -1073,6 +1086,35 @@ public class PlayCardClass
                     yield return ContinuousController.instance.StartCoroutine(CardObjectController.RemoveFromAllArea(card));
 
                     yield return ContinuousController.instance.StartCoroutine(CardObjectController.AddHandCards(new List<CardSource>() { card }, false, null));
+
+                    // [Harness mod] Rule 7-1-2-3: restore to the ORIGINAL
+                    // hand slot captured at the top of this loop, not the
+                    // back of the hand. CardObjectController.AddHandCard
+                    // (invoked by AddHandCards above) unconditionally does
+                    // HandCards.Add(cardSource) -- correct for the other
+                    // callers it's shared with (drawing, returning from
+                    // trash, etc., none of which have an "original position"
+                    // to honor), but wrong for this specific reveal-and-
+                    // return case. Hand position is also how the recorder's
+                    // ActionEncoder resolves "hand_N" for the shared
+                    // 2192-action space (see Recording/ActionEncoder.cs
+                    // EncodePlayCard: "for (int i = 0; i < actor.HandCards.
+                    // Count; i++) ... handSlot = i"), so leaving the append
+                    // in place would silently corrupt action addressing for
+                    // anything driving DCGO externally, not just recordings.
+                    if (originalHandIndex >= 0 && card.Owner.HandCards.Contains(card))
+                    {
+                        int restoredIndex = card.Owner.HandCards.IndexOf(card);
+
+                        if (restoredIndex != originalHandIndex)
+                        {
+                            card.Owner.HandCards.RemoveAt(restoredIndex);
+
+                            int insertIndex = Mathf.Clamp(originalHandIndex, 0, card.Owner.HandCards.Count);
+
+                            card.Owner.HandCards.Insert(insertIndex, card);
+                        }
+                    }
                 }
 
                 ContinuousController.instance.StartCoroutine(OffMemoryPredictionLine());
