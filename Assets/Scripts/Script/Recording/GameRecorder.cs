@@ -23,12 +23,24 @@ namespace Digimon.Recording
     ///
     /// Schema:
     ///   <c>game_start</c>  — header row, emitted once per game with both decks
-    ///   <c>action</c>      — one row per decision, with <c>actor</c>, <c>action_id</c>, <c>phase</c>
+    ///   <c>action</c>      — one row per decision, with <c>actor</c>, <c>action_id</c>, <c>phase</c>,
+    ///                        and (added post-v1, field is optional) <c>memory</c>
+    ///   <c>selection</c>   — a semantic selection answer; also carries <c>memory</c>
+    ///   <c>initial_state</c> — (added post-v1, optional) post-mulligan zone snapshot,
+    ///                        emitted once per game — see <see cref="LogInitialState"/>
     ///   <c>encoder_failure</c> — sentinel for decisions the encoder cannot yet map
     ///   <c>game_end</c>    — terminal row with winner and reason
     ///
+    /// <c>memory</c> convention (see <see cref="AppendMemory"/>): the shared
+    /// memory gauge, converted to THIS RECORDING's <c>my_player_id</c>
+    /// perspective — positive favors the recording player, negative favors
+    /// the opponent. Always relative to the same fixed player for the whole
+    /// recording, never to whoever is turn-player at that row, so a reader
+    /// never has to re-derive whose favor a value means. Omitted entirely on
+    /// rows from older recorders (parses as absent, not zero).
+    ///
     /// See <c>openspec/changes/add-dcgo-recording-parity-harness/specs/dcgo-parity-harness/spec.md</c>
-    /// for the authoritative schema definition.
+    /// and <c>docs/DCGO_RECORDING_SCHEMA.md</c> for the authoritative schema definition.
     /// </summary>
     public sealed class GameRecorder : MonoBehaviour
     {
@@ -238,6 +250,78 @@ namespace Digimon.Recording
             CloseCurrentRecording(winnerPlayerId, reason);
         }
 
+        /// <summary>
+        /// Log the post-mulligan zone snapshot. Called ONCE per game, from
+        /// <c>TurnStateMachine.StartGame</c> immediately after BOTH players'
+        /// mulligan decisions have resolved and security has been dealt.
+        ///
+        /// Closes a real gap: rule 5-2-1-5 of the official rules manual makes
+        /// a mulligan a TRUE reshuffle ("the player returns their entire hand
+        /// to their deck, shuffles it, then draws 5 cards for their new
+        /// initial hand") — so <c>game_start</c>'s <c>my_deck_post_shuffle</c>
+        /// (captured BEFORE mulligan) does not reflect a mulliganed game's
+        /// actual post-mulligan order. Without this row, the Rust replay
+        /// harness can only re-simulate the mulligan through its OWN RNG,
+        /// which cannot reproduce DCGO's actual redraw.
+        ///
+        /// <b>Ordering convention</b>: card-id lists use the SAME "index 0 =
+        /// first drawn / top" convention as <c>game_start</c>'s
+        /// <c>my_deck_post_shuffle</c> (see <see cref="LogGameStart"/>) —
+        /// NOT the Rust native recorder's opposite, bottom-first convention.
+        /// The Rust <c>DcgoAdapter</c> reverses these lists itself before
+        /// laying them into its pop-from-end zones; do not pre-reverse here.
+        /// <c>initialHand</c> has no top/bottom concept and is passed as-is.
+        ///
+        /// <b>Player-id convention</b>: <paramref name="firstPlayerId"/> is 0
+        /// or 1 — DCGO's OWN convention (matches <c>game_start</c>'s
+        /// <c>my_player_id</c> / <c>first_player</c>), explicitly NOT the
+        /// Rust native recorder's opposite 1/2 (Python) convention. Do not
+        /// translate it before passing in.
+        ///
+        /// <c>opp*</c> parameters are <c>null</c> for PvP (the opponent's
+        /// post-mulligan hand/library isn't observable — same visibility
+        /// split as <c>opp_deck_post_shuffle</c>), populated for Bot Match.
+        /// </summary>
+        public void LogInitialState(
+            int firstPlayerId,
+            IList<string> myLibraryOrder,
+            IList<string> myDigitamaLibraryOrder,
+            IList<string> mySecurityOrder,
+            IList<string> myInitialHand,
+            IList<string> oppLibraryOrder = null,
+            IList<string> oppDigitamaLibraryOrder = null,
+            IList<string> oppSecurityOrder = null,
+            IList<string> oppInitialHand = null)
+        {
+            if (!_gameInProgress || _writer == null) return;
+            var sb = new StringBuilder(384);
+            sb.Append('{');
+            AppendKv(sb, "type", "initial_state");        sb.Append(',');
+            AppendKv(sb, "first_player_id", firstPlayerId); sb.Append(',');
+            sb.Append("\"my\":{");
+            AppendKvArray(sb, "library_order", myLibraryOrder); sb.Append(',');
+            AppendKvArray(sb, "digitama_library_order", myDigitamaLibraryOrder ?? Array.Empty<string>()); sb.Append(',');
+            AppendKvArray(sb, "security_order", mySecurityOrder); sb.Append(',');
+            AppendKvArray(sb, "initial_hand", myInitialHand);
+            sb.Append('}');
+            if (oppLibraryOrder != null)
+            {
+                sb.Append(',').Append("\"opp\":{");
+                AppendKvArray(sb, "library_order", oppLibraryOrder); sb.Append(',');
+                AppendKvArray(sb, "digitama_library_order", oppDigitamaLibraryOrder ?? Array.Empty<string>()); sb.Append(',');
+                AppendKvArray(sb, "security_order", oppSecurityOrder ?? Array.Empty<string>()); sb.Append(',');
+                AppendKvArray(sb, "initial_hand", oppInitialHand ?? Array.Empty<string>());
+                sb.Append('}');
+            }
+            AppendMemory(sb);
+            sb.Append('}');
+            WriteRow(sb.ToString());
+            // Deliberately does NOT increment `_stepIndex` -- this row isn't a
+            // decision (nothing to number against); numbering the surrounding
+            // action/selection rows must stay unaffected by whether a given
+            // recording happens to carry this snapshot.
+        }
+
         // ── Public API: per-decision logging ──────────────────────────────
 
         /// <summary>
@@ -374,6 +458,7 @@ namespace Digimon.Recording
             if (intValue.HasValue)  { sb.Append(',').Append("\"int_value\":").Append(intValue.Value); }
             if (boolValue.HasValue) { sb.Append(','); AppendKv(sb, "bool_value", boolValue.Value); }
             if (cancel)             { sb.Append(','); AppendKv(sb, "cancel", true); }
+            AppendMemory(sb);
             AppendBoards(sb);
             sb.Append('}');
             WriteRow(sb.ToString());
@@ -404,11 +489,42 @@ namespace Digimon.Recording
                 AppendKv(sb, "action_id", encoded.ActionId);     sb.Append(',');
                 AppendKv(sb, "phase", phase ?? "");               sb.Append(',');
                 AppendKv(sb, "source", source);
+                AppendMemory(sb);
                 AppendBoards(sb);
             }
             sb.Append('}');
             WriteRow(sb.ToString());
             _stepIndex++;
+        }
+
+        /// <summary>
+        /// Append the shared memory gauge, converted to THIS RECORDING's
+        /// <c>my_player_id</c> perspective (i.e. the LOCAL client's own
+        /// <c>GManager.instance.You</c> — see <see cref="LogGameStart"/>'s
+        /// doc: <c>myPlayerId == GManager.instance.You.PlayerID</c>).
+        ///
+        /// Convention: positive favors the recording player, negative
+        /// favors the opponent. This is DCGO's own
+        /// <c>Player.MemoryForPlayer</c> getter (see <c>Player.cs</c>) — it
+        /// already converts the shared, single <c>GameContext.Memory</c>
+        /// gauge (which is stored positive-favors-PlayerID-1, negated for
+        /// PlayerID 0) into "as seen by this player" form. Emitting the
+        /// ALREADY-perspective-converted value here — always relative to
+        /// the SAME fixed player for the whole recording, never to
+        /// whoever is turn-player at a given row — means a reader never
+        /// has to re-derive whose favor a bare number means; a wrong
+        /// guess there would silently invert every comparison.
+        ///
+        /// No-op (field omitted, not zero) when <c>GManager.instance.You</c>
+        /// is unavailable, so rows stay well-formed outside a live game —
+        /// same defensive pattern as <see cref="AppendBoards"/>.
+        /// </summary>
+        private static void AppendMemory(StringBuilder sb)
+        {
+            var you = GManager.instance?.You;
+            if (you == null) return;
+            sb.Append(',');
+            AppendKv(sb, "memory", you.MemoryForPlayer);
         }
 
         /// <summary>

@@ -626,6 +626,54 @@ public class TurnStateMachine : MonoBehaviourPunCallbacks
         }
         #endregion
 
+        #region Log post-mulligan snapshot
+        // [Recording mod] Both players' mulligan decisions have resolved and
+        // security has been dealt -- general_rule.pdf rule 5-2-1-5 makes a
+        // mulligan a TRUE reshuffle, so the `LogGameStart` call above (which
+        // ran BEFORE mulligan) does not capture a mulliganed game's actual
+        // post-mulligan zone order. Emit the exact snapshot here, once, so
+        // the Rust replay harness can reconstruct it directly instead of
+        // re-simulating the mulligan through its own (unreproducible) RNG.
+        if (Digimon.Recording.GameRecorder.Instance != null)
+        {
+            var myLib = new List<string>();
+            foreach (var c in gameContext.You.LibraryCards) myLib.Add(c?.CardID ?? "");
+            var myEgg = new List<string>();
+            foreach (var c in gameContext.You.DigitamaLibraryCards) myEgg.Add(c?.CardID ?? "");
+            var mySec = new List<string>();
+            foreach (var c in gameContext.You.SecurityCards) mySec.Add(c?.CardID ?? "");
+            var myHand = new List<string>();
+            foreach (var c in gameContext.You.HandCards) myHand.Add(c?.CardID ?? "");
+
+            List<string> oppLib = null, oppEgg = null, oppSec = null, oppHand = null;
+            if (GManager.instance.IsAI)
+            {
+                // Bot Match: opponent's post-mulligan zones are fully
+                // observable too (same visibility split as `LogGameStart`'s
+                // oppDeck/oppEggDeck above).
+                oppLib = new List<string>();
+                foreach (var c in gameContext.Opponent.LibraryCards) oppLib.Add(c?.CardID ?? "");
+                oppEgg = new List<string>();
+                foreach (var c in gameContext.Opponent.DigitamaLibraryCards) oppEgg.Add(c?.CardID ?? "");
+                oppSec = new List<string>();
+                foreach (var c in gameContext.Opponent.SecurityCards) oppSec.Add(c?.CardID ?? "");
+                oppHand = new List<string>();
+                foreach (var c in gameContext.Opponent.HandCards) oppHand.Add(c?.CardID ?? "");
+            }
+            // PvP: opp* stay null -- the opponent's post-mulligan hand/library
+            // isn't observable, same as `oppDeckCardIds` in `LogGameStart`.
+
+            // `gameContext.NonTurnPlayer` still holds the first player here --
+            // set once in the "先攻・後攻の決定" region above and never
+            // reassigned by the mulligan/security loops in between. Same
+            // source `LogGameStart` used for its `firstPlayerId` argument.
+            Digimon.Recording.GameRecorder.Instance.LogInitialState(
+                gameContext.NonTurnPlayer.PlayerID,
+                myLib, myEgg, mySec, myHand,
+                oppLib, oppEgg, oppSec, oppHand);
+        }
+        #endregion
+
         DoneStartGame = true;
     }
 
