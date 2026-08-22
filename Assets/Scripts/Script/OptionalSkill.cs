@@ -1,4 +1,4 @@
-using Photon;
+﻿using Photon;
 using Photon.Pun;
 using Photon.Realtime;
 using System;
@@ -160,14 +160,30 @@ public class OptionalSkill : MonoBehaviourPunCallbacks
             // present -- a bare bool cannot distinguish "no" from "absent",
             // and a step that FORGOT the answer must abort loudly rather than
             // silently decline the optional effect under test.
-            if (!__step.select_has_bool)
+            //
+            // select_cancel is ALSO an answer here, and it means "no". An
+            // OptionalSkill prompt IS a yes/no, so declining it and answering
+            // no are the same choice -- unlike the Select*Effect prompts,
+            // where cancel is a distinct "walk away from the pick" shape.
+            // Without this mapping every scenario `decline:` aimed at a "you
+            // may" gate aborted the job (review finding 1: the scenario
+            // schema serializes decline as select_cancel, and this hook
+            // accepted only select_bool -- 6 scenarios unauthorable).
+            if (__step.select_cancel)
+            {
+                useOptional = false;
+            }
+            else if (!__step.select_has_bool)
             {
                 Digimon.Harness.InputDriver.Abort(
-                    "OptionalSkill prompt needs select_bool (with select_has_bool: true), got: " +
+                    "OptionalSkill prompt needs select_bool (with select_has_bool: true) or select_cancel, got: " +
                     Digimon.Harness.SelectionAnswer.Describe(__step));
                 return;
             }
-            useOptional = __step.select_bool;
+            else
+            {
+                useOptional = __step.select_bool;
+            }
         }
 
         // [Recording mod] canonical optional-effect yes/no.
