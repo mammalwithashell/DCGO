@@ -306,6 +306,45 @@ public class TurnStateMachine : MonoBehaviourPunCallbacks
         }
         #endregion
 
+        // [Harness mod - phase 2] Honor job.first_player.
+        //
+        // Until now this was a documented lie: `submit` wrote the field, the
+        // job spec claimed to control seating, and DCGO ignored it -- so the
+        // roll above stood and a corpus was seat-biased in a dimension the job
+        // spec said it controlled. Worse for the exam: a scripted line's actor
+        // sequence had to be authored against whatever DCGO happened to roll,
+        // which made lines authored from our engine's lowering fail their very
+        // first actor assertion about half the time.
+        //
+        // Note the inversion, which is DCGO's own and is easy to get backwards:
+        // the FIRST player is the NON-turn player at this point --
+        // `LogGameStart` records `gameContext.NonTurnPlayer.PlayerID` as
+        // `first_player`, and `gameContext.FirstPlayer = gameContext
+        // .NonTurnPlayer` a few dozen lines below. So honoring "first_player: P"
+        // means seating P as the ENEMY of TurnPlayer, exactly as the PvP
+        // room-property path immediately above does.
+        //
+        // Placed AFTER that block so an explicit job wins over a room property,
+        // and it consumes no GameRandom draw of its own -- the roll above still
+        // happens, so the RNG stream stays identical to an unseated run and
+        // seeds remain comparable across both.
+        if (Digimon.Harness.JobWatcher.Instance != null
+            && Digimon.Harness.JobWatcher.Instance.CurrentJob != null)
+        {
+            int __wantFirst = Digimon.Harness.JobWatcher.Instance.CurrentJob.first_player;
+
+            if (__wantFirst == 0 || __wantFirst == 1)
+            {
+                gameContext.TurnPlayer = gameContext.PlayerFromID(__wantFirst).Enemy;
+                Debug.Log("[Harness] seating player " + __wantFirst + " first (job.first_player)");
+            }
+            else
+            {
+                Debug.LogWarning("[Harness] job.first_player=" + __wantFirst
+                    + " is not 0 or 1; leaving DCGO's own roll in place");
+            }
+        }
+
         #endregion
 
 
