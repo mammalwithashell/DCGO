@@ -1294,7 +1294,70 @@ public class TurnStateMachine : MonoBehaviourPunCallbacks
                 if (GManager.instance.IsAI
                     && (!gameContext.TurnPlayer.isYou || GManager.instance.isAuto))
                 {
-                    if (RandomUtility.IsSucceedProbability(0.99f))
+                    // [Harness mod - phase 2] THE scripted main-phase seam.
+                    //
+                    // This is where a scripted line drives a main-phase decision
+                    // -- NOT QueueMainPhaseAction, which is the human-UI path and
+                    // never fires here (see the gap note on that method). The
+                    // wait loop above only dequeues under
+                    // `!IsAI || TurnPlayer.isYou`; a harness game is
+                    // `IsAI && isAuto`, so both seats reach THIS brain, which
+                    // writes PlayCard / TargetFrameID / AttackingPermanent /
+                    // DefendingPermanent / UseCardEffect directly and lets the
+                    // shared processing below consume them.
+                    //
+                    // So the driver sets the same fields, via the same
+                    // MainPhaseAction.Execute the human path uses -- reusing
+                    // DCGO's own translation (SetPlayCard / SetAttackingPermaent
+                    // / SetActSkill) instead of duplicating it. The recorder's
+                    // mirror block below then logs the scripted decision exactly
+                    // as it logs the brain's, so a scripted game and a bot game
+                    // speak one action vocabulary.
+                    //
+                    // PASS is deliberately NOT Execute()d. BuildMainPhaseAction
+                    // returns a PassAction whose Execute calls PassTurn(), but
+                    // leaving every decision field null instead falls into the
+                    // existing pass branch at the bottom of this block, which
+                    // both LOGS the pass and runs EndTurnProcess. Executing it
+                    // would end the turn down a second path and lose the row.
+                    bool __harnessDrove = false;
+                    if (Digimon.Harness.InputDriver.IsActive)
+                    {
+                        __harnessDrove = true;
+
+                        int __scriptedId;
+                        if (!Digimon.Harness.InputDriver.TryAnswer(
+                                gameContext.TurnPlayer.PlayerID,
+                                Digimon.Harness.InputDriver.KindMainPhase,
+                                -1, null, out __scriptedId))
+                        {
+                            // TryAnswer has already aborted the job on a prompt
+                            // mismatch. Never fall through to the AI brain: that
+                            // would silently answer a scripted question with a
+                            // random choice and the run would look successful.
+                            yield break;
+                        }
+
+                        if (__scriptedId != Digimon.Recording.ActionSpace.PASS)
+                        {
+                            string __decodeError;
+                            MainPhaseAction __scriptedAction =
+                                Digimon.Harness.InputDriver.BuildMainPhaseAction(
+                                    __scriptedId, gameContext.TurnPlayer, out __decodeError);
+
+                            if (__scriptedAction == null)
+                            {
+                                Digimon.Harness.InputDriver.Abort(
+                                    "main-phase action " + __scriptedId
+                                    + " could not be decoded: " + __decodeError);
+                                yield break;
+                            }
+
+                            __scriptedAction.Execute(this);
+                        }
+                    }
+
+                    if (!__harnessDrove && RandomUtility.IsSucceedProbability(0.99f))
                     {
                         if (gameContext.TurnPlayer.GetFieldPermanents().Count((permanent) => permanent.CanAttack(null)) > 0)
                         {
@@ -3488,30 +3551,25 @@ public class TurnStateMachine : MonoBehaviourPunCallbacks
         // families a queued action can name. An id outside them aborts the job
         // rather than quietly queueing something else.
         //
-        // !! KNOWN GAP -- this hook DOES NOT FIRE UNDER THE HARNESS. !!
-        // QueueMainPhaseAction is the HUMAN-UI path. MainPhase()'s wait loop
-        // only dequeues main-phase actions under `!IsAI || TurnPlayer.isYou`
-        // (~line 1266); a harness game is `IsAI && isAuto`, so both seats take
-        // the AI brain at ~line 1291, which never queues an action -- it sets
-        // the PlayCard / TargetFrameID / AttackingPermanent / DefendingPermanent
-        // / UseCardEffect fields directly and the shared processing consumes
-        // them. The recorder says so itself in the mirror block at ~line 1526
-        // ("The AI never routes through QueueMainPhaseAction"), which is
-        // precisely why that mirror block exists.
+        // This hook does NOT fire under the harness, and that is expected --
+        // it is the HUMAN-UI path. MainPhase()'s wait loop only dequeues
+        // main-phase actions under `!IsAI || TurnPlayer.isYou`; a harness game
+        // is `IsAI && isAuto`, so both seats take the AI brain (~line 1294),
+        // which never queues an action -- it writes PlayCard / TargetFrameID /
+        // AttackingPermanent / DefendingPermanent / UseCardEffect directly.
         //
-        // So `main_phase` is not yet scriptable. The real seam is the mirror
-        // block: immediately before it, the decision fields hold the AI's
-        // finalized choice for this loop iteration, and overwriting them there
-        // would make the recorder log the scripted action -- the same
-        // driver-hooks-where-the-recorder-hooks property the selection RPCs
-        // have. Doing that needs a decoder to the FIELDS rather than to a
-        // MainPhaseAction, plus care with the block's per-iteration
-        // double-log memo, and it cannot inject a decision the AI did not
-        // reach at all. Left for a follow-up rather than half-built here.
+        // The scripted seam therefore lives in that brain, not here. See the
+        // "[Harness mod - phase 2] THE scripted main-phase seam" block.
         //
-        // The hook below is still correct for the paths that DO queue actions
-        // (CheckCardPanel hand-effect activation, NextPhaseButton's pass, and
-        // the UI drag/click handlers), so it is kept rather than deleted.
+        // This hook is KEPT because it is correct for a human-in-the-loop game
+        // and for any future non-isAuto harness mode. Do not delete it, and do
+        // not assume a scripted line flows through it.
+        //
+        // Historical note worth keeping: "the recorder hooks LogAction here, so
+        // the driver can intercept here too" is a reasonable-looking inference
+        // and it is WRONG. The recorder gets its main-phase rows from a second
+        // mirror block inside the AI brain, not from this method. Reading was
+        // solved long before driving was.
         if (player != null && Digimon.Harness.InputDriver.IsActive)
         {
             int __scripted;
