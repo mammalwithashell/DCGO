@@ -436,18 +436,25 @@ public class MultipleSkills : MonoBehaviourPunCallbacks
         // [Harness mod - phase 2] A scripted line answers here, before the
         // recorder sees anything, so the recorded row carries what the script
         // asked for rather than the value the AI computed and we discard.
-        // A false return is never "the script declined" -- TryAnswer has
+        // A false return is never "the script declined" -- TryAnswerStep has
         // already aborted the job on a mismatch -- so do not fall through.
         if (Digimon.Harness.InputDriver.IsActive)
         {
-            int __scripted;
-            if (!Digimon.Harness.InputDriver.TryAnswer(
+            Digimon.Harness.HarnessJobStep __step;
+            if (!Digimon.Harness.InputDriver.TryAnswerStep(
                     playerID, Digimon.Harness.InputDriver.KindMultipleSkills,
-                    1, null, out __scripted))
+                    1, null, out __step))
             {
                 return;
             }
-            skillIndex = __scripted;
+            if (__step.select_value == int.MinValue)
+            {
+                Digimon.Harness.InputDriver.Abort(
+                    "MultipleSkills prompt needs select_value (the skill index), got: " +
+                    Digimon.Harness.SelectionAnswer.Describe(__step));
+                return;
+            }
+            skillIndex = __step.select_value;
         }
 
         // [Recording mod] trigger-order / multi-effect choice.

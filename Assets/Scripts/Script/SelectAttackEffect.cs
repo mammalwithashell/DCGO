@@ -554,38 +554,122 @@ public class SelectAttackEffect : MonoBehaviourPunCallbacks
     }
 
     #region ‘I‘ðŒˆ’è
+    /// <summary>
+    /// [Harness mod - exam select] Candidate attack-target permanents for the
+    /// scripted driver, in the same enumeration order the AI builds its
+    /// AttackcTargetCandidates: every player's field (turn player first),
+    /// filtered by <see cref="CanTarget"/>.
+    /// </summary>
+    private List<Permanent> ScriptedCandidatePermanents()
+    {
+        try
+        {
+            var perms = new List<Permanent>();
+            foreach (Player player in GManager.instance.turnStateMachine.gameContext.Players_ForTurnPlayer)
+            {
+                foreach (Permanent permanent in player.GetFieldPermanents())
+                {
+                    if (CanTarget(permanent)) perms.Add(permanent);
+                }
+            }
+            return perms;
+        }
+        catch (Exception)
+        {
+            // An absent candidate list means NOT MEASURED, never "none
+            // offered" -- a step asserting candidates then fails loudly.
+            return null;
+        }
+    }
+
     [PunRPC]
     public void SetAttackTarget(int playerID, bool isTurnPlayer, int permanentIndex)
     {
-        // [Harness mod - phase 2] A scripted line answers here, before the
+        // [Harness mod - exam select] A scripted line answers here, before the
         // recorder sees anything, so the recorded row carries what the script
         // asked for rather than the value the AI computed and we discard.
-        // A false return is never "the script declined" -- TryAnswer has
+        // A false return is never "the script declined" -- TryAnswerStep has
         // already aborted the job on a mismatch -- so do not fall through.
+        //
+        // Answer shapes, per the exam wire:
+        //   select_card_ids: [<top-card id>]  attack that permanent (identity
+        //                                     matched against this prompt's
+        //                                     own candidate list);
+        //   select_value: -1                  attack the player / security;
+        //   select_cancel: true               decline the attack (-2).
+        // The side bit for the player/security case names the seat being
+        // attacked -- the non-turn player, since attacks only happen on the
+        // attacker's own turn; for decline it is meaningless.
         if (Digimon.Harness.InputDriver.IsActive)
         {
-            int __scripted;
-            if (!Digimon.Harness.InputDriver.TryAnswer(
+            List<Permanent> __perms = ScriptedCandidatePermanents();
+            List<string> __candidateIds = null;
+            if (__perms != null)
+            {
+                __candidateIds = new List<string>();
+                foreach (Permanent __perm in __perms)
+                {
+                    __candidateIds.Add(__perm?.TopCard?.CardID ?? "");
+                }
+            }
+            Digimon.Harness.HarnessJobStep __step;
+            if (!Digimon.Harness.InputDriver.TryAnswerStep(
                     playerID, Digimon.Harness.InputDriver.KindSelectAttack,
-                    1, null, out __scripted))
+                    1, __candidateIds, out __step))
             {
                 return;
             }
-            bool __side;
-            int __index;
-            if (Digimon.Harness.InputDriver.TryDecodePermanentTarget(__scripted, out __side, out __index))
+            if (__step.select_cancel)
             {
-                isTurnPlayer = __side;
-                permanentIndex = __index;
+                isTurnPlayer = false;
+                permanentIndex = NopIndex;
+            }
+            else if (__step.select_value != int.MinValue)
+            {
+                if (__step.select_value != -1)
+                {
+                    Digimon.Harness.InputDriver.Abort(
+                        "SelectAttackEffect: select_value must be -1 (attack the player), got " +
+                        __step.select_value + "; permanent targets go by select_card_ids");
+                    return;
+                }
+                isTurnPlayer = false;
+                permanentIndex = SecurityIndex;
+            }
+            else if (__step.select_card_ids != null && __step.select_card_ids.Length > 0)
+            {
+                if (__step.select_card_ids.Length != 1)
+                {
+                    Digimon.Harness.InputDriver.Abort(
+                        "SelectAttackEffect: an attack has exactly one target, got " +
+                        __step.select_card_ids.Length + " select_card_ids");
+                    return;
+                }
+                int[] __picks;
+                string __err;
+                if (!Digimon.Harness.SelectionAnswer.MatchCardIds(
+                        __step.select_card_ids, __candidateIds, out __picks, out __err))
+                {
+                    Digimon.Harness.InputDriver.Abort("SelectAttackEffect: " + __err);
+                    return;
+                }
+                Permanent __target = __perms[__picks[0]];
+                if (__target == null || __target.TopCard == null)
+                {
+                    Digimon.Harness.InputDriver.Abort(
+                        "SelectAttackEffect: matched candidate " + __picks[0] +
+                        " has no top card, cannot address it");
+                    return;
+                }
+                isTurnPlayer = __target.TopCard.Owner == GManager.instance.turnStateMachine.gameContext.TurnPlayer;
+                permanentIndex = __target.TopCard.Owner.GetFieldPermanents().IndexOf(__target);
             }
             else
             {
-                // -2 = decline, -1 = the player / security. The side bit is
-                // meaningless for -2 and, for -1, names the seat being
-                // attacked -- which is the non-turn player, since attacks only
-                // happen on the attacker's own turn.
-                isTurnPlayer = false;
-                permanentIndex = __scripted;
+                Digimon.Harness.InputDriver.Abort(
+                    "SelectAttackEffect prompt needs select_card_ids, select_value: -1, " +
+                    "or select_cancel, got: " + Digimon.Harness.SelectionAnswer.Describe(__step));
+                return;
             }
         }
 

@@ -124,5 +124,48 @@ namespace Digimon.Harness.Tests
             var line = new ScriptedLine(new HarnessJobStep[0]);
             Assert.IsTrue(line.IsExhausted);
         }
+
+        // -- TryTakeStep: the whole-step path the selection hooks use -----
+
+        [Test]
+        public void TryTakeStep_ReturnsTheWholeStepAndAdvances()
+        {
+            var selection = new HarnessJobStep
+            {
+                actor = 0,
+                expect_prompt = "SelectHandEffect",
+                expect_candidates = new string[0],
+                select_card_ids = new[] { "ST1-03", "ST1-03" },
+            };
+            var line = new ScriptedLine(new[] { selection });
+            Assert.IsTrue(line.TryTakeStep(0, Ctx("SelectHandEffect"),
+                                           out HarnessJobStep step, out string mismatch));
+            Assert.IsNull(mismatch);
+            Assert.AreSame(selection, step);
+            CollectionAssert.AreEqual(new[] { "ST1-03", "ST1-03" }, step.select_card_ids);
+            Assert.AreEqual(1, line.Cursor);
+        }
+
+        [Test]
+        public void TryTakeStep_Mismatch_YieldsNoStepAndDoesNotAdvance()
+        {
+            var line = new ScriptedLine(new[] { Step(0, 12, "SelectHandEffect") });
+            Assert.IsFalse(line.TryTakeStep(0, Ctx("SelectCountEffect"),
+                                            out HarnessJobStep step, out string mismatch));
+            Assert.IsNull(step);
+            StringAssert.Contains("SelectHandEffect", mismatch);
+            Assert.AreEqual(0, line.Cursor);
+        }
+
+        [Test]
+        public void TryTake_StillReadsActionIdOffTheStep()
+        {
+            // The int path is a wrapper over TryTakeStep -- one consume path,
+            // the int overload just reads step.action_id.
+            var line = new ScriptedLine(new[] { Step(0, 61, "breeding_action") });
+            Assert.IsTrue(line.TryTake(0, Ctx("breeding_action"), out int id, out string mismatch));
+            Assert.AreEqual(61, id);
+            Assert.AreEqual(1, line.Cursor);
+        }
     }
 }

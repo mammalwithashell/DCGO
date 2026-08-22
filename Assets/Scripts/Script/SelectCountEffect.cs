@@ -220,7 +220,7 @@ public class SelectCountEffect : MonoBehaviourPunCallbacks
         // [Harness mod - phase 2] A scripted line answers here, before the
         // recorder sees anything, so the recorded row carries what the script
         // asked for rather than the value the AI computed and we discard.
-        // A false return is never "the script declined" -- TryAnswer has
+        // A false return is never "the script declined" -- TryAnswerStep has
         // already aborted the job on a mismatch -- so do not fall through.
         //
         // This is also where CardController.cs:700's decision surfaces: that
@@ -233,14 +233,23 @@ public class SelectCountEffect : MonoBehaviourPunCallbacks
         // The offered numbers are the candidate list.
         if (Digimon.Harness.InputDriver.IsActive)
         {
-            int __scripted;
-            if (!Digimon.Harness.InputDriver.TryAnswer(
+            Digimon.Harness.HarnessJobStep __step;
+            if (!Digimon.Harness.InputDriver.TryAnswerStep(
                     playerID, Digimon.Harness.InputDriver.KindSelectCount,
-                    1, ScriptedCandidateLabels(), out __scripted))
+                    1, ScriptedCandidateLabels(), out __step))
             {
                 return;
             }
-            selectedCount = __scripted;
+            // select_value carries the count VALUE itself (SetCount takes the
+            // value, not an index into the offered numbers).
+            if (__step.select_value == int.MinValue)
+            {
+                Digimon.Harness.InputDriver.Abort(
+                    "SelectCountEffect prompt needs select_value (the count itself), got: " +
+                    Digimon.Harness.SelectionAnswer.Describe(__step));
+                return;
+            }
+            selectedCount = __step.select_value;
         }
 
         // [Recording mod] Count prompts carry the semantic number itself, plus

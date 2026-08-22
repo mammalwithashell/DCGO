@@ -30,12 +30,13 @@ namespace Digimon.Harness
     ///  4. The AI still computes a throwaway value first. That is pure
     ///     selection logic with no side effects, so discarding it is safe.
     ///
-    /// Every site follows the same three lines: build a
-    /// <see cref="PromptContext"/>, call <see cref="TryAnswer"/> BEFORE the
-    /// existing <c>LogSelectionRow</c> call, and on <c>true</c> substitute the
-    /// scripted value for the AI's before anything else in the method runs --
-    /// so what the recorder writes is what the script asked for, not what the
-    /// AI happened to pick.
+    /// Every site follows the same shape: build the prompt context, call
+    /// <see cref="TryAnswerStep"/> (selection prompts) or
+    /// <see cref="TryAnswer(int, string, int, IList{string}, out int)"/>
+    /// (action-id prompts) BEFORE the existing <c>LogSelectionRow</c> call,
+    /// and on <c>true</c> substitute the scripted answer for the AI's before
+    /// anything else in the method runs -- so what the recorder writes is what
+    /// the script asked for, not what the AI happened to pick.
     ///
     /// A <c>false</c> return is NEVER "the script declined". Either no scripted
     /// job is running (<see cref="IsActive"/> was false), or the line
@@ -71,15 +72,10 @@ namespace Digimon.Harness
         public const string KindBreedingAction  = "breeding_action";
         public const string KindMainPhase       = "main_phase";
 
-        /// <summary>Sentinel: cancel the prompt outright (null payload).</summary>
-        public const int Cancel = -2;
-
-        /// <summary>
-        /// Sentinel: decline / zero-pick confirm / "the player" attack target.
-        /// The exact meaning is per-kind; see the answer-encoding table on
-        /// <see cref="TryAnswer(int, PromptContext, out int)"/>.
-        /// </summary>
-        public const int Decline = -1;
+        // (The Cancel/Decline int sentinels of the retired single-int
+        // selection encoding were removed: cancel/decline now travel as the
+        // step's `select_cancel` field, and "attack the player" as
+        // `select_value: -1`.)
 
         /// <summary>True while a scripted job is driving both seats.</summary>
         public static bool IsActive
@@ -119,23 +115,9 @@ namespace Digimon.Harness
         /// is the question the line expects. Aborts the job on a mismatch.
         /// </summary>
         /// <remarks>
-        /// ANSWER ENCODING. <c>HarnessJobStep.action_id</c> is a single int, so
-        /// each prompt kind interprets it in the parameter space of the RPC it
-        /// substitutes into:
+        /// ANSWER ENCODING. This int overload serves ONLY the three action-id
+        /// kinds; <c>HarnessJobStep.action_id</c> is interpreted per kind:
         ///
-        ///   SelectCardEffect       ActiveCardList card index; -1 = decline.
-        ///   SelectHandEffect       ActiveCardList card index; -1 = decline.
-        ///   SelectPermanentEffect  side*100 + compact battle-area index,
-        ///                          side 0 = turn player, 1 = non-turn player;
-        ///                          -1 = zero-pick confirm; -2 = cancel.
-        ///   SelectAttackEffect     same side*100 + index scheme;
-        ///                          -1 = the player / security; -2 = decline.
-        ///   SelectCountEffect      the count itself.
-        ///   SelectDigiXrosClass    0=Hand 1=Field 2=Trash 3=TamerSources 4=End.
-        ///   MultipleSkills         skill index.
-        ///   OptionalSkill          0 = decline, non-zero = use.
-        ///   generic_int            the value.
-        ///   generic_bool           0 = false, non-zero = true.
         ///   mulligan               0 = keep, 1 = redraw (matches
         ///                          <c>ActionEncoder.EncodeMulligan</c>).
         ///   breeding_action        the engine action id the recorder logs:
@@ -143,26 +125,72 @@ namespace Digimon.Harness
         ///                          61 (MOVE_FROM_BREEDING) = do it.
         ///   main_phase             a 2192-space action id, decoded by
         ///                          <see cref="BuildMainPhaseAction"/>.
-        ///                          NOT YET REACHABLE UNDER THE HARNESS --
-        ///                          see the gap note on
-        ///                          <c>TurnStateMachine.QueueMainPhaseAction</c>:
-        ///                          the AI brain never queues a
-        ///                          MainPhaseAction, it writes the decision
-        ///                          fields directly.
         ///
-        /// KNOWN LIMITATION -- one int cannot express a multi-pick answer, so
-        /// SelectCardEffect / SelectHandEffect / SelectPermanentEffect can only
-        /// be scripted to pick exactly one card (or to decline / cancel). A
-        /// prompt whose _maxCount is greater than 1 is not scriptable until
-        /// HarnessJobStep grows a values[] / card_ids[] field.
+        /// The ~10 SELECTION prompts do NOT answer through this overload any
+        /// more: their hooks call <see cref="TryAnswerStep"/> and consume the
+        /// step's `select_*` payload (card identities matched via
+        /// <see cref="SelectionAnswer.MatchCardIds"/>, count/int values,
+        /// bools, cancel) -- which is what makes multi-pick answers
+        /// expressible at all. A step carrying a selection payload that
+        /// arrives HERE is a prompt mismatch and aborts as a finding.
         /// </remarks>
         public static bool TryAnswer(int actor, PromptContext ctx, out int actionId)
         {
             actionId = -1;
+
+            HarnessJobStep step;
+            if (!ResolveStep(actor, ctx, out step)) return false;
+
+            // A selection payload arriving at an action-id prompt means the
+            // author scripted a selection answer for a decision DCGO models as
+            // a main-phase/breeding/mulligan action -- the same "the two
+            // engines disagree about what this decision IS" finding as a kind
+            // mismatch, and it aborts the same way.
+            if (step.IsSelection)
+            {
+                Abort("prompt mismatch: step " + (Cursor - 1) + " carries a selection payload (" +
+                      SelectionAnswer.Describe(step) + ") but DCGO asked a '" +
+                      (ctx == null ? "<null>" : ctx.Kind) + "' prompt, which takes an action id");
+                return false;
+            }
+
+            actionId = step.action_id;
+            return true;
+        }
+
+        /// <summary>
+        /// Supply the next scripted STEP for <paramref name="actor"/> -- the
+        /// whole step, selection payload included -- if this is the question
+        /// the line expects. Same cursor/assert semantics as
+        /// <see cref="TryAnswer(int, PromptContext, out int)"/>: the prompt is
+        /// asserted BEFORE it is answered, a mismatch aborts the job as a
+        /// finding, and exhaustion completes the line. The selection RPC hooks
+        /// use this and map the step's `select_*` fields onto their own RPC
+        /// payloads (see SelectionAnswer.MatchCardIds for identity picks).
+        /// </summary>
+        public static bool TryAnswerStep(int actor, string kind, int count,
+                                         IList<string> candidates, out HarnessJobStep step)
+        {
+            PromptContext ctx = new PromptContext
+            {
+                Kind = kind,
+                Count = count,
+                Candidates = candidates == null ? new string[0] : ToArray(candidates),
+            };
+            return ResolveStep(actor, ctx, out step);
+        }
+
+        /// <summary>
+        /// The one shared consume path: take the next step (asserting the
+        /// prompt first), complete the line on exhaustion, abort on mismatch.
+        /// </summary>
+        private static bool ResolveStep(int actor, PromptContext ctx, out HarnessJobStep step)
+        {
+            step = null;
             if (_line == null) return false;
 
             string mismatch;
-            if (_line.TryTake(actor, ctx, out actionId, out mismatch)) return true;
+            if (_line.TryTakeStep(actor, ctx, out step, out mismatch)) return true;
 
             // Running off the END of the line is NORMAL termination, not a
             // desync. A scenario is a probe: it drives the position it cares
@@ -233,22 +261,9 @@ namespace Digimon.Harness
         }
 
         // -- Answer decoding helpers --------------------------------------
-
-        /// <summary>
-        /// Split a <c>side*100 + index</c> permanent answer into the
-        /// (isTurnPlayer, compact battle-area index) pair the permanent RPCs
-        /// take. Returns false for the negative sentinels, whose payload shape
-        /// differs per RPC and so is handled at the call site.
-        /// </summary>
-        public static bool TryDecodePermanentTarget(int value, out bool isTurnPlayer, out int index)
-        {
-            isTurnPlayer = true;
-            index = -1;
-            if (value < 0) return false;
-            isTurnPlayer = value < 100;
-            index = value % 100;
-            return true;
-        }
+        // (TryDecodePermanentTarget, the side*100+index splitter for the
+        // retired single-int permanent encoding, was removed when the
+        // permanent/attack hooks moved to identity-matched select_card_ids.)
 
         /// <summary>
         /// Build the <see cref="MainPhaseAction"/> a 2192-space action id names,

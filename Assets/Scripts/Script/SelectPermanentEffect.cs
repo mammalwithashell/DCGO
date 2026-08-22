@@ -1042,46 +1042,113 @@ public class SelectPermanentEffect : MonoBehaviourPunCallbacks
     }
 
     #region 選択決定
+    /// <summary>
+    /// [Harness mod - exam select] Candidate permanents for the scripted
+    /// driver, in the same enumeration order the AI's AutoSelect builds its
+    /// ValidCharas: every player's field (turn player first), filtered by
+    /// <c>_canTargetCondition</c>. Null (NOT MEASURED) when the prompt has no
+    /// single-predicate filter -- the multi-stage
+    /// <c>_canTargetCondition_ByPreSelecetedList</c> prompts enumerate
+    /// combinations, and a flat identity match against them would answer a
+    /// question nobody asked.
+    /// </summary>
+    private System.Collections.Generic.List<Permanent> ScriptedCandidatePermanents()
+    {
+        try
+        {
+            if (_canTargetCondition == null) return null;
+            var perms = new System.Collections.Generic.List<Permanent>();
+            foreach (Player player in GManager.instance.turnStateMachine.gameContext.Players_ForTurnPlayer)
+            {
+                foreach (Permanent unit in player.GetFieldPermanents())
+                {
+                    if (_canTargetCondition(unit)) perms.Add(unit);
+                }
+            }
+            return perms;
+        }
+        catch (System.Exception)
+        {
+            // An absent candidate list means NOT MEASURED, never "none
+            // offered" -- a step asserting candidates then fails loudly.
+            return null;
+        }
+    }
+
     [PunRPC]
     public void SetTargetFrames(int playerID, bool[] isTurnPlayer, int[] UnitIndex)
     {
-        // [Harness mod - phase 2] A scripted line answers here, before the
+        // [Harness mod - exam select] A scripted line answers here, before the
         // recorder sees anything, so the recorded row carries what the script
         // asked for rather than the value the AI computed and we discard.
-        // A false return is never "the script declined" -- TryAnswer has
+        // A false return is never "the script declined" -- TryAnswerStep has
         // already aborted the job on a mismatch -- so do not fall through.
         //
-        // No candidate list: the selectable set here is built by a multi-stage
-        // enumeration (ParameterComparer.Enumerate over combinations), not a
-        // single predicate filter, so it is not recomputable cheaply at this
-        // seam. Passing null marks it NOT MEASURED rather than "none offered".
+        // The step carries the targeted permanents' TOP-CARD ids; they are
+        // matched against this prompt's own candidate list (occurrence order,
+        // each candidate consumed once) and the matches become the
+        // (isTurnPlayer, UnitIndex) pairs this RPC takes, built exactly as the
+        // AI's AutoSelect builds them (Owner == TurnPlayer /
+        // Owner.GetFieldPermanents().IndexOf). Identity matching is what
+        // dissolves the compact-ordering divergence between the engines.
+        // select_cancel is the RPC's cancel shape (null arrays).
         if (Digimon.Harness.InputDriver.IsActive)
         {
-            int __scripted;
-            if (!Digimon.Harness.InputDriver.TryAnswer(
+            System.Collections.Generic.List<Permanent> __perms = ScriptedCandidatePermanents();
+            System.Collections.Generic.List<string> __candidateIds = null;
+            if (__perms != null)
+            {
+                __candidateIds = new System.Collections.Generic.List<string>();
+                foreach (Permanent __perm in __perms)
+                {
+                    __candidateIds.Add(__perm?.TopCard?.CardID ?? "");
+                }
+            }
+            Digimon.Harness.HarnessJobStep __step;
+            if (!Digimon.Harness.InputDriver.TryAnswerStep(
                     playerID, Digimon.Harness.InputDriver.KindSelectPermanent,
-                    _maxCount, null, out __scripted))
+                    _maxCount, __candidateIds, out __step))
             {
                 return;
             }
-            bool __side;
-            int __index;
-            if (Digimon.Harness.InputDriver.TryDecodePermanentTarget(__scripted, out __side, out __index))
-            {
-                isTurnPlayer = new bool[] { __side };
-                UnitIndex = new int[] { __index };
-            }
-            else if (__scripted == Digimon.Harness.InputDriver.Cancel)
+            if (__step.select_cancel)
             {
                 isTurnPlayer = null;
                 UnitIndex = null;
             }
+            else if (__step.select_card_ids != null && __step.select_card_ids.Length > 0)
+            {
+                int[] __picks;
+                string __err;
+                if (!Digimon.Harness.SelectionAnswer.MatchCardIds(
+                        __step.select_card_ids, __candidateIds, out __picks, out __err))
+                {
+                    Digimon.Harness.InputDriver.Abort("SelectPermanentEffect: " + __err);
+                    return;
+                }
+                var __gcx = GManager.instance.turnStateMachine.gameContext;
+                isTurnPlayer = new bool[__picks.Length];
+                UnitIndex = new int[__picks.Length];
+                for (int __i = 0; __i < __picks.Length; __i++)
+                {
+                    Permanent __perm = __perms[__picks[__i]];
+                    if (__perm == null || __perm.TopCard == null)
+                    {
+                        Digimon.Harness.InputDriver.Abort(
+                            "SelectPermanentEffect: matched candidate " + __picks[__i] +
+                            " has no top card, cannot address it");
+                        return;
+                    }
+                    isTurnPlayer[__i] = __perm.TopCard.Owner == __gcx.TurnPlayer;
+                    UnitIndex[__i] = __perm.TopCard.Owner.GetFieldPermanents().IndexOf(__perm);
+                }
+            }
             else
             {
-                // Decline: empty arrays are DCGO's zero-pick confirm, which is
-                // a DIFFERENT answer from cancel and must stay distinguishable.
-                isTurnPlayer = new bool[0];
-                UnitIndex = new int[0];
+                Digimon.Harness.InputDriver.Abort(
+                    "SelectPermanentEffect prompt needs select_card_ids or select_cancel, got: " +
+                    Digimon.Harness.SelectionAnswer.Describe(__step));
+                return;
             }
         }
 

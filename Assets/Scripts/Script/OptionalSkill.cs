@@ -140,7 +140,7 @@ public class OptionalSkill : MonoBehaviourPunCallbacks
         // [Harness mod - phase 2] A scripted line answers here, before the
         // recorder sees anything, so the recorded row carries what the script
         // asked for rather than the value the AI computed and we discard.
-        // A false return is never "the script declined" -- TryAnswer has
+        // A false return is never "the script declined" -- TryAnswerStep has
         // already aborted the job on a mismatch -- so do not fall through.
         //
         // This is the yes/no every "you may" clause funnels through, so it is
@@ -149,14 +149,25 @@ public class OptionalSkill : MonoBehaviourPunCallbacks
         // the AI accepted it.
         if (Digimon.Harness.InputDriver.IsActive)
         {
-            int __scripted;
-            if (!Digimon.Harness.InputDriver.TryAnswer(
+            Digimon.Harness.HarnessJobStep __step;
+            if (!Digimon.Harness.InputDriver.TryAnswerStep(
                     playerID, Digimon.Harness.InputDriver.KindOptionalSkill,
-                    1, null, out __scripted))
+                    1, null, out __step))
             {
                 return;
             }
-            useOptional = __scripted != 0;
+            // select_bool is only an answer when select_has_bool marks it
+            // present -- a bare bool cannot distinguish "no" from "absent",
+            // and a step that FORGOT the answer must abort loudly rather than
+            // silently decline the optional effect under test.
+            if (!__step.select_has_bool)
+            {
+                Digimon.Harness.InputDriver.Abort(
+                    "OptionalSkill prompt needs select_bool (with select_has_bool: true), got: " +
+                    Digimon.Harness.SelectionAnswer.Describe(__step));
+                return;
+            }
+            useOptional = __step.select_bool;
         }
 
         // [Recording mod] canonical optional-effect yes/no.

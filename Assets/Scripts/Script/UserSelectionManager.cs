@@ -29,7 +29,7 @@ public class UserSelectionManager : MonoBehaviourPunCallbacks
         // [Harness mod - phase 2] A scripted line answers here, before the
         // recorder sees anything, so the recorded row carries what the script
         // asked for rather than the value the AI computed and we discard.
-        // A false return is never "the script declined" -- TryAnswer has
+        // A false return is never "the script declined" -- TryAnswerStep has
         // already aborted the job on a mismatch -- so do not fall through.
         //
         // This is the FALLBACK channel, not "every selection response": every
@@ -39,14 +39,21 @@ public class UserSelectionManager : MonoBehaviourPunCallbacks
         // from a recording of the same position.
         if (Digimon.Harness.InputDriver.IsActive)
         {
-            int __scripted;
-            if (!Digimon.Harness.InputDriver.TryAnswer(
+            Digimon.Harness.HarnessJobStep __step;
+            if (!Digimon.Harness.InputDriver.TryAnswerStep(
                     playerID, Digimon.Harness.InputDriver.KindGenericInt,
-                    -1, null, out __scripted))
+                    -1, null, out __step))
             {
                 return;
             }
-            value = __scripted;
+            if (__step.select_value == int.MinValue)
+            {
+                Digimon.Harness.InputDriver.Abort(
+                    "generic_int prompt needs select_value, got: " +
+                    Digimon.Harness.SelectionAnswer.Describe(__step));
+                return;
+            }
+            value = __step.select_value;
         }
 
         // [Recording mod] capture the selection. Hooked at the [PunRPC] target
@@ -86,14 +93,21 @@ public class UserSelectionManager : MonoBehaviourPunCallbacks
         // prompt does.
         if (Digimon.Harness.InputDriver.IsActive)
         {
-            int __scripted;
-            if (!Digimon.Harness.InputDriver.TryAnswer(
+            Digimon.Harness.HarnessJobStep __step;
+            if (!Digimon.Harness.InputDriver.TryAnswerStep(
                     playerID, Digimon.Harness.InputDriver.KindGenericBool,
-                    1, null, out __scripted))
+                    1, null, out __step))
             {
                 return;
             }
-            value = __scripted != 0;
+            if (!__step.select_has_bool)
+            {
+                Digimon.Harness.InputDriver.Abort(
+                    "generic_bool prompt needs select_bool (with select_has_bool: true), got: " +
+                    Digimon.Harness.SelectionAnswer.Describe(__step));
+                return;
+            }
+            value = __step.select_bool;
         }
 
         // [Recording mod] capture bool selection (yes/no, optional triggers).

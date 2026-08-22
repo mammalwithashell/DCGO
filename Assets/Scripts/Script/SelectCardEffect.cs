@@ -855,14 +855,30 @@ public class SelectCardEffect : MonoBehaviourPunCallbacks
     /// </summary>
     private System.Collections.Generic.List<string> ScriptedCandidateIds()
     {
+        System.Collections.Generic.List<CardSource> cards = ScriptedCandidateCards();
+        if (cards == null) return null;
+        var ids = new System.Collections.Generic.List<string>();
+        foreach (CardSource cardSource in cards) ids.Add(cardSource?.CardID ?? "");
+        return ids;
+    }
+
+    /// <summary>
+    /// [Harness mod - exam select] The candidate CardSources behind
+    /// <see cref="ScriptedCandidateIds"/>, in the same order, so a matched
+    /// candidate index maps straight onto the ActiveCardList CardIndex the
+    /// RPC needs -- the same root-list + predicate pair AutoSelect builds
+    /// its ValidCards from.
+    /// </summary>
+    private System.Collections.Generic.List<CardSource> ScriptedCandidateCards()
+    {
         try
         {
-            var ids = new System.Collections.Generic.List<string>();
+            var cards = new System.Collections.Generic.List<CardSource>();
             foreach (CardSource cardSource in RootCardList())
             {
-                if (CanSelectCard(cardSource)) ids.Add(cardSource?.CardID ?? "");
+                if (CanSelectCard(cardSource)) cards.Add(cardSource);
             }
-            return ids;
+            return cards;
         }
         catch (System.Exception)
         {
@@ -875,25 +891,59 @@ public class SelectCardEffect : MonoBehaviourPunCallbacks
     [PunRPC]
     public void SetTargetCardAndIndicies(int playerID, int[] CardIDs, int[] Indicies)
     {
-        // [Harness mod - phase 2] A scripted line answers here, before the
+        // [Harness mod - exam select] A scripted line answers here, before the
         // recorder sees anything, so the recorded row carries what the script
         // asked for rather than the value the AI computed and we discard.
-        // A false return is never "the script declined" -- TryAnswer has
+        // A false return is never "the script declined" -- TryAnswerStep has
         // already aborted the job on a mismatch -- so do not fall through.
+        //
+        // The step carries card IDENTITIES; they are matched against this
+        // prompt's own candidate list (occurrence order, each candidate
+        // consumed once) and the matches become the ActiveCardList CardIndex
+        // ints this RPC takes. Indicies stays null, exactly as the AI's
+        // AutoSelect passes it. select_cancel is the decline shape (an empty
+        // pick, which is what the recorder's cancel branch and the
+        // "Not Select" path both read).
         if (Digimon.Harness.InputDriver.IsActive)
         {
-            int __scripted;
-            if (!Digimon.Harness.InputDriver.TryAnswer(
+            System.Collections.Generic.List<CardSource> __cards = ScriptedCandidateCards();
+            System.Collections.Generic.List<string> __candidateIds = ScriptedCandidateIds();
+            Digimon.Harness.HarnessJobStep __step;
+            if (!Digimon.Harness.InputDriver.TryAnswerStep(
                     playerID, Digimon.Harness.InputDriver.KindSelectCard,
-                    _maxCount, ScriptedCandidateIds(), out __scripted))
+                    _maxCount, __candidateIds, out __step))
             {
                 return;
             }
-            // The scripted value is an ActiveCardList card index; negative
-            // means decline (an empty pick, which is what the recorder's
-            // cancel branch and the "Not Select" path both read).
-            CardIDs = __scripted < 0 ? new int[0] : new int[] { __scripted };
-            Indicies = null;
+            if (__step.select_cancel)
+            {
+                CardIDs = new int[0];
+                Indicies = null;
+            }
+            else if (__step.select_card_ids != null && __step.select_card_ids.Length > 0)
+            {
+                int[] __picks;
+                string __err;
+                if (!Digimon.Harness.SelectionAnswer.MatchCardIds(
+                        __step.select_card_ids, __candidateIds, out __picks, out __err))
+                {
+                    Digimon.Harness.InputDriver.Abort("SelectCardEffect: " + __err);
+                    return;
+                }
+                CardIDs = new int[__picks.Length];
+                for (int __i = 0; __i < __picks.Length; __i++)
+                {
+                    CardIDs[__i] = __cards[__picks[__i]].CardIndex;
+                }
+                Indicies = null;
+            }
+            else
+            {
+                Digimon.Harness.InputDriver.Abort(
+                    "SelectCardEffect prompt needs select_card_ids or select_cancel, got: " +
+                    Digimon.Harness.SelectionAnswer.Describe(__step));
+                return;
+            }
         }
 
         // [Recording mod] panel picks: card identities + display-order indexes.

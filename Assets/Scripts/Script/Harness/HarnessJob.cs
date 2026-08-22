@@ -63,6 +63,10 @@ namespace Digimon.Harness
                     {
                         job.inputs[i].expect_candidates = new string[0];
                     }
+                    if (job.inputs[i].select_card_ids == null)
+                    {
+                        job.inputs[i].select_card_ids = new string[0];
+                    }
                 }
 
                 // A scripted job with no line would start a game nobody drives
@@ -123,6 +127,52 @@ namespace Digimon.Harness
         public int expect_count = -1;
         /// <summary>Expected candidate card IDs, order-insensitive. Empty means "do not assert".</summary>
         public string[] expect_candidates = new string[0];
+
+        // -- Selection payload (exam `select:` steps) ---------------------
+        // A selection step answers one of the ~10 [PunRPC] selection prompts
+        // instead of carrying a 2192-space action id. The wire carries card
+        // IDENTITIES, never engine-internal indices; each hook resolves them
+        // against ITS OWN candidate list via SelectionAnswer.MatchCardIds.
+        // Absent = not a selection step (see IsSelection).
+
+        /// <summary>
+        /// Identity picks, in pick order. For permanent prompts these are the
+        /// targeted permanents' TOP-CARD ids. Duplicates resolve in occurrence
+        /// order against the prompt's candidate list (documented limitation).
+        /// </summary>
+        public string[] select_card_ids = new string[0];
+
+        /// <summary>
+        /// Count VALUE / generic int / attack-target encoding (-1 = attack
+        /// the player). Sentinel <see cref="int.MinValue"/> means absent:
+        /// JsonUtility has no absent-key attribute for ints, but it only
+        /// overwrites a field initializer when the key is present in the JSON,
+        /// so the initializer IS the absent default.
+        /// </summary>
+        public int select_value = int.MinValue;
+
+        /// <summary>True when <see cref="select_bool"/> carries an answer
+        /// (a bare bool cannot distinguish "false" from "absent").</summary>
+        public bool select_has_bool;
+
+        /// <summary>OptionalSkill / generic_bool answer; only meaningful when
+        /// <see cref="select_has_bool"/> is true.</summary>
+        public bool select_bool;
+
+        /// <summary>Decline / cancel the prompt outright.</summary>
+        public bool select_cancel;
+
+        /// <summary>
+        /// True when this step carries a selection payload -- i.e. it answers
+        /// a selection prompt rather than naming a main-phase/breeding action.
+        /// A selection step arriving at an action-id prompt (or vice versa)
+        /// is a prompt mismatch and aborts the job as a finding.
+        /// </summary>
+        public bool IsSelection =>
+            (select_card_ids != null && select_card_ids.Length > 0)
+            || select_value != int.MinValue
+            || select_has_bool
+            || select_cancel;
     }
 
     [Serializable]

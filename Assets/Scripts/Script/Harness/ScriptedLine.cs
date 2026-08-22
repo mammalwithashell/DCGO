@@ -74,12 +74,32 @@ namespace Digimon.Harness
         public bool IsExhausted => _cursor >= _steps.Length;
 
         /// <summary>
-        /// Take the next scripted action if it matches what is being asked.
+        /// Take the next scripted action id if it matches what is being asked.
         /// Advances the cursor only on success.
         /// </summary>
+        /// <remarks>
+        /// Thin wrapper over <see cref="TryTakeStep"/> for the action-id
+        /// prompt kinds (main_phase / breeding_action / mulligan). The guard
+        /// that a SELECTION step must not answer an action-id prompt lives in
+        /// <c>InputDriver.TryAnswer</c>, which sees the whole step.
+        /// </remarks>
         public bool TryTake(int actor, PromptContext ctx, out int actionId, out string mismatch)
         {
             actionId = -1;
+            HarnessJobStep step;
+            if (!TryTakeStep(actor, ctx, out step, out mismatch)) return false;
+            actionId = step.action_id;
+            return true;
+        }
+
+        /// <summary>
+        /// Take the next scripted step -- the WHOLE step, selection payload
+        /// included -- if it matches what is being asked. Advances the cursor
+        /// only on success.
+        /// </summary>
+        public bool TryTakeStep(int actor, PromptContext ctx, out HarnessJobStep step, out string mismatch)
+        {
+            step = null;
             mismatch = null;
 
             if (IsExhausted)
@@ -94,46 +114,46 @@ namespace Digimon.Harness
                 return false;
             }
 
-            HarnessJobStep step = _steps[_cursor];
+            HarnessJobStep candidate = _steps[_cursor];
 
-            if (step.actor != actor)
+            if (candidate.actor != actor)
             {
-                mismatch = "step " + _cursor + " expected actor " + step.actor +
+                mismatch = "step " + _cursor + " expected actor " + candidate.actor +
                            " but DCGO asked actor " + actor;
                 return false;
             }
 
             string kind = ctx == null ? null : ctx.Kind;
 
-            if (!string.IsNullOrEmpty(step.expect_prompt) && step.expect_prompt != kind)
+            if (!string.IsNullOrEmpty(candidate.expect_prompt) && candidate.expect_prompt != kind)
             {
-                mismatch = "step " + _cursor + " expected prompt '" + step.expect_prompt +
+                mismatch = "step " + _cursor + " expected prompt '" + candidate.expect_prompt +
                            "' but DCGO asked '" + kind + "'";
                 return false;
             }
 
-            if (step.expect_count >= 0 && ctx != null && ctx.Count >= 0 &&
-                step.expect_count != ctx.Count)
+            if (candidate.expect_count >= 0 && ctx != null && ctx.Count >= 0 &&
+                candidate.expect_count != ctx.Count)
             {
-                mismatch = "step " + _cursor + " expected count " + step.expect_count +
+                mismatch = "step " + _cursor + " expected count " + candidate.expect_count +
                            " but DCGO asked for count " + ctx.Count;
                 return false;
             }
 
-            if (step.expect_candidates != null && step.expect_candidates.Length > 0)
+            if (candidate.expect_candidates != null && candidate.expect_candidates.Length > 0)
             {
                 string[] actual = (ctx == null || ctx.Candidates == null)
                     ? new string[0] : ctx.Candidates;
-                if (!SameMultiset(step.expect_candidates, actual))
+                if (!SameMultiset(candidate.expect_candidates, actual))
                 {
                     mismatch = "step " + _cursor + " expected candidates [" +
-                               string.Join(",", step.expect_candidates) +
+                               string.Join(",", candidate.expect_candidates) +
                                "] but DCGO offered [" + string.Join(",", actual) + "]";
                     return false;
                 }
             }
 
-            actionId = step.action_id;
+            step = candidate;
             _cursor++;
             return true;
         }

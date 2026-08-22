@@ -783,18 +783,34 @@ public class SelectHandEffect : MonoBehaviourPunCallbacks
     /// </summary>
     private List<string> ScriptedCandidateIds()
     {
+        List<CardSource> cards = ScriptedCandidateCards();
+        if (cards == null) return null;
+        var ids = new List<string>();
+        foreach (CardSource cardSource in cards) ids.Add(cardSource?.CardID ?? "");
+        return ids;
+    }
+
+    /// <summary>
+    /// [Harness mod - exam select] The candidate CardSources behind
+    /// <see cref="ScriptedCandidateIds"/>, in the same order, so a matched
+    /// candidate index maps straight onto the ActiveCardList CardIndex the
+    /// RPC needs -- the same list-and-filter the AI's AutoSelect sweep builds
+    /// its ValidCards from.
+    /// </summary>
+    private List<CardSource> ScriptedCandidateCards()
+    {
         try
         {
-            var ids = new List<string>();
+            var cards = new List<CardSource>();
             if (_selectPlayer == null || _selectPlayer.HandCards == null) return null;
             foreach (CardSource cardSource in _selectPlayer.HandCards)
             {
                 if (_canTargetCondition == null || _canTargetCondition(cardSource))
                 {
-                    ids.Add(cardSource?.CardID ?? "");
+                    cards.Add(cardSource);
                 }
             }
-            return ids;
+            return cards;
         }
         catch (Exception)
         {
@@ -807,23 +823,55 @@ public class SelectHandEffect : MonoBehaviourPunCallbacks
     [PunRPC]
     public void SetTargetHandCards(int playerID, int[] CardIDs)
     {
-        // [Harness mod - phase 2] A scripted line answers here, before the
+        // [Harness mod - exam select] A scripted line answers here, before the
         // recorder sees anything, so the recorded row carries what the script
         // asked for rather than the value the AI computed and we discard.
-        // A false return is never "the script declined" -- TryAnswer has
+        // A false return is never "the script declined" -- TryAnswerStep has
         // already aborted the job on a mismatch -- so do not fall through.
+        //
+        // The step carries card IDENTITIES; they are matched against this
+        // prompt's own candidate list (occurrence order, each candidate
+        // consumed once) and the matches become the ActiveCardList CardIndex
+        // ints this RPC takes -- the same ints the AI's AutoSelect passes.
+        // select_cancel is the RPC's decline shape (null array).
         if (Digimon.Harness.InputDriver.IsActive)
         {
-            int __scripted;
-            if (!Digimon.Harness.InputDriver.TryAnswer(
+            System.Collections.Generic.List<CardSource> __cards = ScriptedCandidateCards();
+            System.Collections.Generic.List<string> __candidateIds = ScriptedCandidateIds();
+            Digimon.Harness.HarnessJobStep __step;
+            if (!Digimon.Harness.InputDriver.TryAnswerStep(
                     playerID, Digimon.Harness.InputDriver.KindSelectHand,
-                    _maxCount, ScriptedCandidateIds(), out __scripted))
+                    _maxCount, __candidateIds, out __step))
             {
                 return;
             }
-            // ActiveCardList card index; negative means decline, which this
-            // RPC expresses as a null array (the recorder's cancel branch).
-            CardIDs = __scripted < 0 ? null : new int[] { __scripted };
+            if (__step.select_cancel)
+            {
+                CardIDs = null;
+            }
+            else if (__step.select_card_ids != null && __step.select_card_ids.Length > 0)
+            {
+                int[] __picks;
+                string __err;
+                if (!Digimon.Harness.SelectionAnswer.MatchCardIds(
+                        __step.select_card_ids, __candidateIds, out __picks, out __err))
+                {
+                    Digimon.Harness.InputDriver.Abort("SelectHandEffect: " + __err);
+                    return;
+                }
+                CardIDs = new int[__picks.Length];
+                for (int __i = 0; __i < __picks.Length; __i++)
+                {
+                    CardIDs[__i] = __cards[__picks[__i]].CardIndex;
+                }
+            }
+            else
+            {
+                Digimon.Harness.InputDriver.Abort(
+                    "SelectHandEffect prompt needs select_card_ids or select_cancel, got: " +
+                    Digimon.Harness.SelectionAnswer.Describe(__step));
+                return;
+            }
         }
 
         // [Recording mod] hand picks arrive as ActiveCardList indices; record
