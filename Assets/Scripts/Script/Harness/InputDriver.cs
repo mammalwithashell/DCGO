@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using UnityEngine;
 
 namespace Digimon.Harness
@@ -163,6 +163,26 @@ namespace Digimon.Harness
 
             string mismatch;
             if (_line.TryTake(actor, ctx, out actionId, out mismatch)) return true;
+
+            // Running off the END of the line is NORMAL termination, not a
+            // desync. A scenario is a probe: it drives the position it cares
+            // about and stops, and DCGO would keep asking for the rest of the
+            // match regardless. Ending here keeps the recording and the state
+            // sidecar, which are exactly what the differ needs.
+            //
+            // The genuine finding -- "our engine expected a choice here and
+            // DCGO never asked", or asked a different one -- surfaces as a
+            // mismatch on a SPECIFIC step below, not as exhaustion. Conflating
+            // the two made every finished scenario read as a failure.
+            if (_line.IsExhausted)
+            {
+                _line = null;
+                if (JobWatcher.Instance != null)
+                {
+                    JobWatcher.Instance.CompleteScriptedLine();
+                }
+                return false;
+            }
 
             // A prompt mismatch is a FINDING, not an error: "our engine expected
             // a choice here and DCGO never asked" (or asked a different one) is

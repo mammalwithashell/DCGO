@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections;
 using System.IO;
 using Photon.Pun;
@@ -441,6 +441,37 @@ namespace Digimon.Harness
             JobResultWriter.FileResult("partial", _turnsSeen, "exceeded max_turns");
             _turnsSeen = 0;
             // Reloading kills the running game; the poll loop claims the next job.
+            SceneManager.LoadScene("BattleScene");
+        }
+
+        /// <summary>
+        /// End the job because the scripted line RAN OUT -- normally, having
+        /// answered every question it was written to answer.
+        /// </summary>
+        /// <remarks>
+        /// A scenario is a PROBE, not a whole game. It drives the position it
+        /// cares about and then stops; DCGO would happily keep asking for the
+        /// rest of the match, and that is not a divergence.
+        ///
+        /// This is deliberately distinct from <see cref="AbortCurrentJob"/>.
+        /// Exhaustion used to route there, which conflated two opposite things:
+        ///   - the line finished          -> normal termination, evidence is good
+        ///   - DCGO asked something the line did not answer MID-LINE
+        ///                                -> a real desync, evidence is poison
+        /// The second still aborts, because it surfaces as a prompt mismatch on
+        /// a specific step. Only running off the END is clean.
+        ///
+        /// Files "completed" and keeps the recording + state sidecar, because
+        /// they are exactly what the differ consumes.
+        /// </remarks>
+        public void CompleteScriptedLine()
+        {
+            if (CurrentJob == null) return;
+
+            Debug.Log("[Harness] job " + CurrentJob.job_id
+                      + " scripted line complete; ending the game");
+            JobResultWriter.FileResult("completed", _turnsSeen, "scripted line complete");
+            _turnsSeen = 0;
             SceneManager.LoadScene("BattleScene");
         }
 
