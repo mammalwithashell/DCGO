@@ -696,22 +696,25 @@ public class TurnStateMachine : MonoBehaviourPunCallbacks
             return;
         }
 
-        // [Harness mod - phase 2] A scripted line answers here, before the
-        // recorder sees anything, so the recorded row carries what the script
-        // asked for rather than the value the AI computed and we discard.
-        // A false return is never "the script declined" -- TryAnswer has
-        // already aborted the job on a mismatch -- so do not fall through.
-        // 0 = keep, 1 = redraw, matching ActionEncoder.EncodeMulligan.
+        // [Harness mod - phase 2] Under a scripted line BOTH seats always KEEP,
+        // and no scripted step is consumed for it.
+        //
+        // This is forced by symmetry with our engine, not a preference. The
+        // scenario step vocabulary has no mulligan verb, so ScenarioAdapter
+        // resolves both mulligans itself (keep) and its line begins at turn 1.
+        // If this hook consumed a step instead, DCGO would be one step ahead of
+        // our engine from the very first decision and EVERY scripted job would
+        // abort on a prompt mismatch -- a desync caused entirely by the harness
+        // rather than by the card under test.
+        //
+        // Consequence, stated plainly: a scripted scenario CANNOT exercise a
+        // mulligan. Both engines are pinned to "keep", so the two agree, but
+        // neither is measuring the mulligan. Giving the scenario format a
+        // mulligan verb on both sides is the fix; until then this is a known
+        // hole in the exam's coverage, not a verified agreement.
         if (Digimon.Harness.InputDriver.IsActive)
         {
-            int __scripted;
-            if (!Digimon.Harness.InputDriver.TryAnswer(
-                    playerID, Digimon.Harness.InputDriver.KindMulligan,
-                    1, null, out __scripted))
-            {
-                return;
-            }
-            isRedraw = __scripted != 0;
+            isRedraw = false;
         }
 
         // [Recording mod] capture the mulligan decision. Hooked here (the
