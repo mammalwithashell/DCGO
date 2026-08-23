@@ -151,6 +151,28 @@ namespace Digimon.Harness
         /// </summary>
         public int select_value = int.MinValue;
 
+        /// <summary>
+        /// Which of the SAME identity's candidates to take, 0-based, when
+        /// <see cref="select_card_ids"/> names a card the prompt offers more
+        /// than once. Same <see cref="int.MinValue"/> absent sentinel as
+        /// <see cref="select_value"/>.
+        /// </summary>
+        /// <remarks>
+        /// Introduced for the MultipleSkills (trigger-order) prompt, whose
+        /// candidates are stacked TRIGGERS rather than interchangeable copies:
+        /// a deleted carrier with an [On Deletion] and an &lt;Ascension&gt;
+        /// offers its own identity twice, and those are different decisions, so
+        /// occurrence order must not silently pick between them (see
+        /// <see cref="SelectionAnswer.MatchOneWithOrdinal"/>).
+        ///
+        /// It is deliberately NOT <see cref="select_value"/> reused: that field
+        /// stays the raw DCGO-index fallback, and one field meaning "an index
+        /// into DCGO's list" in one step and "an index within one card's own
+        /// triggers" in the next is exactly the value-space confusion this
+        /// whole payload exists to end.
+        /// </remarks>
+        public int select_ordinal = int.MinValue;
+
         /// <summary>True when <see cref="select_bool"/> carries an answer
         /// (a bare bool cannot distinguish "false" from "absent").</summary>
         public bool select_has_bool;
@@ -171,6 +193,7 @@ namespace Digimon.Harness
         public bool IsSelection =>
             (select_card_ids != null && select_card_ids.Length > 0)
             || select_value != int.MinValue
+            || select_ordinal != int.MinValue
             || select_has_bool
             || select_cancel;
     }

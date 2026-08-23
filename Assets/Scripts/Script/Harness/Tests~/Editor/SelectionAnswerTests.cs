@@ -1,4 +1,4 @@
-using NUnit.Framework;
+﻿using NUnit.Framework;
 using Digimon.Harness;
 
 namespace Digimon.Harness.Tests
@@ -87,6 +87,145 @@ namespace Digimon.Harness.Tests
                 new[] { "ST1-03" }, null, out int[] picks, out string error));
             StringAssert.Contains("ST1-03", error);
             StringAssert.Contains("NOT MEASURED", error);
+        }
+
+        // -- MatchOneWithOrdinal -----------------------------------------
+        // The single-pick variant used by the MultipleSkills (trigger-order)
+        // prompt, whose candidates are a card's stacked TRIGGERS rather than
+        // interchangeable copies. Occurrence order must NOT silently decide
+        // between two triggers of the same card.
+
+        [Test]
+        public void MatchOne_UniqueIdentity_ResolvesWithoutAnOrdinal()
+        {
+            Assert.IsTrue(SelectionAnswer.MatchOneWithOrdinal(
+                "EX12-047", SelectionAnswer.NoOrdinal,
+                new[] { "EX12-011", "EX12-047", "EX12-026" },
+                out int pick, out string error));
+            Assert.IsNull(error);
+            Assert.AreEqual(1, pick);
+        }
+
+        [Test]
+        public void MatchOne_UniqueIdentity_AcceptsTheRedundantOrdinalZero()
+        {
+            Assert.IsTrue(SelectionAnswer.MatchOneWithOrdinal(
+                "EX12-047", 0, new[] { "EX12-011", "EX12-047" },
+                out int pick, out string error));
+            Assert.AreEqual(1, pick);
+        }
+
+        [Test]
+        public void MatchOne_UniqueIdentity_RejectsAnOrdinalThatCannotExist()
+        {
+            // Asking for the 2nd trigger of a card that stacked only one is the
+            // author believing something about the position that is not true.
+            Assert.IsFalse(SelectionAnswer.MatchOneWithOrdinal(
+                "EX12-047", 1, new[] { "EX12-011", "EX12-047" },
+                out int pick, out string error));
+            Assert.AreEqual(-1, pick);
+            StringAssert.Contains("ordinal 1", error);
+            StringAssert.Contains("offered exactly once", error);
+        }
+
+        [Test]
+        public void MatchOne_AmbiguousIdentity_WithoutAnOrdinal_IsAnError_NotTheFirstOccurrence()
+        {
+            // THE case this method exists for: one deleted carrier stacking an
+            // [On Deletion] and an <Ascension> offers its identity twice, and
+            // those are different decisions. Taking the first would be a
+            // confident wrong answer -- so it must refuse and say how to
+            // disambiguate.
+            Assert.IsFalse(SelectionAnswer.MatchOneWithOrdinal(
+                "EX12-047", SelectionAnswer.NoOrdinal,
+                new[] { "EX12-047", "EX12-011", "EX12-047" },
+                out int pick, out string error));
+            Assert.AreEqual(-1, pick);
+            StringAssert.Contains("AMBIGUOUS", error);
+            StringAssert.Contains("offered 2 times", error);
+            StringAssert.Contains("select_ordinal", error);
+            StringAssert.Contains("0..1", error);
+            // The offered list is named, because the abort is a FINDING.
+            StringAssert.Contains("EX12-047,EX12-011,EX12-047", error);
+        }
+
+        [Test]
+        public void MatchOne_AmbiguousIdentity_OrdinalPicksAmongThatCardsOwnCandidates()
+        {
+            // Ordinal 1 is the SECOND EX12-047 (candidate index 2), not
+            // candidate index 1 -- the ordinal is scoped to the identity.
+            Assert.IsTrue(SelectionAnswer.MatchOneWithOrdinal(
+                "EX12-047", 1, new[] { "EX12-047", "EX12-011", "EX12-047" },
+                out int pick, out string error));
+            Assert.IsNull(error);
+            Assert.AreEqual(2, pick);
+
+            Assert.IsTrue(SelectionAnswer.MatchOneWithOrdinal(
+                "EX12-047", 0, new[] { "EX12-047", "EX12-011", "EX12-047" },
+                out int first, out string _));
+            Assert.AreEqual(0, first);
+        }
+
+        [Test]
+        public void MatchOne_AmbiguousIdentity_OrdinalOutOfRange_IsAnError()
+        {
+            Assert.IsFalse(SelectionAnswer.MatchOneWithOrdinal(
+                "EX12-047", 2, new[] { "EX12-047", "EX12-047" },
+                out int pick, out string error));
+            Assert.AreEqual(-1, pick);
+            StringAssert.Contains("valid ordinals 0..1", error);
+        }
+
+        [Test]
+        public void MatchOne_NegativeOrdinal_IsAnError()
+        {
+            Assert.IsFalse(SelectionAnswer.MatchOneWithOrdinal(
+                "EX12-047", -1, new[] { "EX12-047", "EX12-047" },
+                out int pick, out string error));
+            StringAssert.Contains("ordinal -1", error);
+        }
+
+        [Test]
+        public void MatchOne_UnmatchedIdentity_IsAnErrorNamingTheOfferedList()
+        {
+            Assert.IsFalse(SelectionAnswer.MatchOneWithOrdinal(
+                "EX12-063", SelectionAnswer.NoOrdinal, new[] { "EX12-047", "EX12-011" },
+                out int pick, out string error));
+            StringAssert.Contains("EX12-063", error);
+            StringAssert.Contains("EX12-047,EX12-011", error);
+        }
+
+        [Test]
+        public void MatchOne_NullCandidateList_IsNotMeasured_NotAMatch()
+        {
+            Assert.IsFalse(SelectionAnswer.MatchOneWithOrdinal(
+                "EX12-047", SelectionAnswer.NoOrdinal, null,
+                out int pick, out string error));
+            StringAssert.Contains("NOT MEASURED", error);
+        }
+
+        [Test]
+        public void MatchOne_NoOrdinal_IsTheSameAbsentMarkerTheWireUses()
+        {
+            // select_ordinal's absent sentinel and NoOrdinal must be the same
+            // value, or a step that omitted select_ordinal would read as
+            // ordinal int.MinValue and fail every ambiguity check.
+            Assert.AreEqual(new HarnessJobStep().select_ordinal, SelectionAnswer.NoOrdinal);
+        }
+
+        [Test]
+        public void Describe_NamesTheOrdinalSeparatelyFromTheRawValue()
+        {
+            // The two fields mean different things (a position within one
+            // card's triggers vs a raw index into DCGO's list), so an abort
+            // message must never blur them.
+            string described = SelectionAnswer.Describe(new HarnessJobStep
+            {
+                select_card_ids = new[] { "EX12-047" },
+                select_ordinal = 1,
+            });
+            StringAssert.Contains("select_ordinal=1", described);
+            StringAssert.DoesNotContain("select_value", described);
         }
 
         [Test]

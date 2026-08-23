@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 
 namespace Digimon.Harness
@@ -17,9 +17,13 @@ namespace Digimon.Harness
     /// state -- so the matching rules are unit-testable without a Unity
     /// runtime, the same reasoning that shaped <see cref="ScriptedLine"/>.
     ///
-    /// KNOWN LIMITATION: two same-identity candidates are distinguished only
-    /// by occurrence order. That is a documented property of the exam wire,
-    /// not an accident.
+    /// KNOWN LIMITATION: in <see cref="MatchCardIds"/>, two same-identity
+    /// candidates are distinguished only by occurrence order. That is a
+    /// documented property of the exam wire, not an accident -- it is right
+    /// where the duplicates are interchangeable copies of a card.
+    /// <see cref="MatchOneWithOrdinal"/> is the variant for prompts where they
+    /// are NOT (a card's several stacked triggers); it refuses to guess and
+    /// requires an explicit ordinal instead.
     /// </remarks>
     public static class SelectionAnswer
     {
@@ -85,6 +89,109 @@ namespace Digimon.Harness
             return true;
         }
 
+        /// <summary>Sentinel for "this step carried no ordinal".</summary>
+        /// <remarks>
+        /// The same <see cref="int.MinValue"/> absent-marker
+        /// <see cref="HarnessJobStep.select_ordinal"/> uses, named here so the
+        /// ordinal overload reads as an ordinal rather than as a raw index.
+        /// </remarks>
+        public const int NoOrdinal = int.MinValue;
+
+        /// <summary>
+        /// Resolve exactly ONE wanted card ID against an offered candidate
+        /// list, disambiguating same-identity candidates by an explicit
+        /// ordinal instead of by occurrence order.
+        /// </summary>
+        /// <remarks>
+        /// <see cref="MatchCardIds"/> resolves duplicates positionally, which
+        /// is right for "pick 2 Koromon from a hand" -- the copies are
+        /// interchangeable. It is WRONG for a single-pick prompt whose
+        /// candidates are a card's several stacked TRIGGERS (an [On Deletion]
+        /// and an &lt;Ascension&gt; on the same deleted carrier both offer that
+        /// carrier's identity): there the duplicates are different decisions,
+        /// so silently taking the first would be a confident wrong answer of
+        /// exactly the kind the harness exists to prevent.
+        ///
+        /// So: one match resolves with no ordinal; several matches REQUIRE one
+        /// and error without it, naming every candidate.
+        /// </remarks>
+        /// <param name="wanted">The card ID the script asks for.</param>
+        /// <param name="ordinal">0-based position AMONG the candidates
+        /// carrying <paramref name="wanted"/>, or <see cref="NoOrdinal"/> when
+        /// the step carried none.</param>
+        /// <param name="candidateIds">Card IDs the prompt offers, in the
+        /// prompt's own order. Null means the candidate list could not be
+        /// computed -- NOT MEASURED, and an unverifiable match is a wrong
+        /// answer waiting to happen.</param>
+        /// <param name="pick">Index into <paramref name="candidateIds"/>.</param>
+        /// <param name="error">On failure, a message naming the wanted id, the
+        /// ordinal, and the offered list -- it feeds an abort that a human
+        /// triages as a FINDING, so it has to be legible on its own.</param>
+        public static bool MatchOneWithOrdinal(string wanted, int ordinal,
+                                               IList<string> candidateIds,
+                                               out int pick, out string error)
+        {
+            pick = -1;
+            error = null;
+
+            string want = wanted ?? "";
+
+            if (candidateIds == null)
+            {
+                error = "wanted card '" + want + "' but the prompt's candidate list could not " +
+                        "be computed (NOT MEASURED), so identities cannot be matched";
+                return false;
+            }
+
+            List<int> matches = new List<int>();
+            for (int c = 0; c < candidateIds.Count; c++)
+            {
+                if (string.Equals(want, candidateIds[c] ?? "", StringComparison.Ordinal))
+                {
+                    matches.Add(c);
+                }
+            }
+
+            if (matches.Count == 0)
+            {
+                error = "wanted card '" + want + "' is not among the offered candidates [" +
+                        Join(candidateIds) + "]";
+                return false;
+            }
+
+            if (matches.Count == 1)
+            {
+                if (ordinal != NoOrdinal && ordinal != 0)
+                {
+                    error = "wanted card '" + want + "' with ordinal " + ordinal +
+                            ", but it is offered exactly once by [" + Join(candidateIds) +
+                            "] (only ordinal 0 exists)";
+                    return false;
+                }
+                pick = matches[0];
+                return true;
+            }
+
+            if (ordinal == NoOrdinal)
+            {
+                error = "wanted card '" + want + "' is AMBIGUOUS: it is offered " + matches.Count +
+                        " times by [" + Join(candidateIds) + "]. Add select_ordinal, the 0-based " +
+                        "position among that card's own candidates (0.." + (matches.Count - 1) + ")";
+                return false;
+            }
+
+            if (ordinal < 0 || ordinal >= matches.Count)
+            {
+                error = "wanted card '" + want + "' with ordinal " + ordinal +
+                        ", but it is offered " + matches.Count + " times by [" +
+                        Join(candidateIds) + "] (valid ordinals 0.." + (matches.Count - 1) + ")";
+                return false;
+            }
+
+            pick = matches[ordinal];
+            return true;
+        }
+
         /// <summary>
         /// One-line description of a step's selection payload, for abort
         /// messages. A hook that receives the WRONG payload shape for its
@@ -107,6 +214,10 @@ namespace Digimon.Harness
             if (step.select_value != int.MinValue)
             {
                 parts.Add("select_value=" + step.select_value);
+            }
+            if (step.select_ordinal != int.MinValue)
+            {
+                parts.Add("select_ordinal=" + step.select_ordinal);
             }
             if (step.select_has_bool)
             {

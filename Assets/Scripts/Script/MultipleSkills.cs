@@ -62,6 +62,78 @@ public class MultipleSkills : MonoBehaviourPunCallbacks
 
     int _skillIndex;
 
+    #region [Harness mod - exam select] staged candidate list for SetTargetSkill
+    // SetTargetSkill is a [PunRPC] and receives only (playerID, skillIndex);
+    // skillInfos_active is a local of the coroutine that raised the prompt.
+    // A scripted answer that names a trigger by IDENTITY therefore has nothing
+    // to resolve against unless the coroutine hands the list over, so it does,
+    // once per prompt, immediately after the list is finalized.
+    //
+    // Null means NOT MEASURED: the hook then refuses to resolve an identity or
+    // to range-check an index rather than guessing at either. Reentrancy is
+    // not a hazard -- AutoProcessing keeps a POOL of MultipleSkills components
+    // and `availableMultipleSkills` hands out one that is not `IsUsing`, so a
+    // nested resolution runs on a different instance with its own field.
+    List<SkillInfo> _scriptedActiveSkillInfos;
+
+    /// <summary>Source-card ids of the staged prompt, in prompt order.</summary>
+    List<string> ScriptedCandidateCardIds()
+    {
+        if (_scriptedActiveSkillInfos == null) return null;
+
+        List<string> ids = new List<string>();
+        foreach (SkillInfo skillInfo in _scriptedActiveSkillInfos)
+        {
+            CardSource source = skillInfo != null && skillInfo.CardEffect != null
+                ? skillInfo.CardEffect.EffectSourceCard : null;
+            ids.Add(source == null ? "" : source.CardID);
+        }
+        return ids;
+    }
+
+    /// <summary>
+    /// Human-legible dump of the staged prompt for abort messages: index, source
+    /// card id, and DCGO's own effect name. The effect name is diagnostics only
+    /// -- it is NOT part of the wire vocabulary -- but it is what lets an author
+    /// see which of a card's several triggers each ordinal names.
+    /// </summary>
+    string DescribeScriptedCandidates()
+    {
+        if (_scriptedActiveSkillInfos == null) return "[not measured]";
+
+        List<string> parts = new List<string>();
+        for (int i = 0; i < _scriptedActiveSkillInfos.Count; i++)
+        {
+            SkillInfo skillInfo = _scriptedActiveSkillInfos[i];
+            ICardEffect cardEffect = skillInfo == null ? null : skillInfo.CardEffect;
+            CardSource source = cardEffect == null ? null : cardEffect.EffectSourceCard;
+            string name = cardEffect == null ? "" : (cardEffect.EffectName ?? "");
+            parts.Add(i + ":" + (source == null ? "<none>" : source.CardID)
+                      + (string.IsNullOrEmpty(name) ? "" : " '" + name + "'"));
+        }
+        return "[" + string.Join(" | ", parts.ToArray()) + "]";
+    }
+
+    /// <summary>
+    /// Whether every staged effect could legally be declined -- DCGO's own
+    /// `_CanNoSelect` gate on the "Don't activate these effects" button. The
+    /// scripted path never opens that panel, so the gate has to be re-checked
+    /// here or a scripted cancel would drop MANDATORY triggers and play on.
+    /// Null (NOT MEASURED) is not "yes".
+    /// </summary>
+    bool ScriptedStackIsAllSkippable()
+    {
+        if (_scriptedActiveSkillInfos == null) return false;
+
+        foreach (SkillInfo skillInfo in _scriptedActiveSkillInfos)
+        {
+            if (skillInfo == null || skillInfo.CardEffect == null) return false;
+            if (!skillInfo.CardEffect.IsSkippable(skillInfo.Hashtable)) return false;
+        }
+        return true;
+    }
+    #endregion
+
     bool IsCutinEffect(bool CheckNewTriggredSkill_mainStack) => !CheckNewTriggredSkill_mainStack && _autoProcessing != GManager.instance.autoProcessing;
 
     IEnumerator ActivateMultipleSkills_OnePlayer(List<SkillInfo> skillInfos, Player player, bool CheckNewTriggredSkill_mainStack, Func<List<SkillInfo>, SkillInfo, bool> skipCondition)
@@ -163,6 +235,10 @@ public class MultipleSkills : MonoBehaviourPunCallbacks
 
             skillInfos_active = skillInfos_active.Filter(skillInfo => skillInfo != null && skillInfo.CardEffect != null
                 && skillInfo.CardEffect.CanActivate(skillInfo.Hashtable) && skillInfo.CardEffect.EffectSourceCard != null);
+
+            // [Harness mod - exam select] Stage this prompt's candidate list for
+            // SetTargetSkill, BEFORE any branch can raise the prompt.
+            _scriptedActiveSkillInfos = skillInfos_active;
 
             if (skillInfos_active.Count > 0)
             {
@@ -347,7 +423,32 @@ public class MultipleSkills : MonoBehaviourPunCallbacks
                 #region Executing the effect
                 IEnumerator Activate(bool isCheckOptional)
                 {
-                    if (_skillIndex < 0 || skillInfos_active.Count < _skillIndex)
+                    // [Harness mod] Upstream's guard read `skillInfos_active.Count <
+                    // _skillIndex`, which is off by one in the dangerous direction:
+                    // _skillIndex == Count slipped through into the indexer below
+                    // (IndexOutOfRangeException), and anything larger SILENTLY emptied
+                    // StackedSkillInfos and yield-broke -- the outer while-loop then sees
+                    // an empty stack, breaks, and the game plays on WITHOUT the remaining
+                    // triggers. A game that continues wrong is worse than one that stops,
+                    // and under a scripted line it is a wrong answer nobody sees, so an
+                    // out-of-range index is a FINDING here.
+                    if (_skillIndex >= skillInfos_active.Count)
+                    {
+                        if (Digimon.Harness.InputDriver.IsActive)
+                        {
+                            Digimon.Harness.InputDriver.Abort(
+                                "MultipleSkills: skill index " + _skillIndex + " is out of range for " +
+                                skillInfos_active.Count + " active effect(s) " + DescribeScriptedCandidates() +
+                                "; DCGO would have cleared the whole trigger stack and played on without it");
+                        }
+
+                        StackedSkillInfos = new List<SkillInfo>();
+                        yield break;
+                    }
+
+                    // -1 is DCGO's own "Don't activate these effects" -- a legitimate
+                    // decline of a stack of optional effects, not an error.
+                    if (_skillIndex < 0)
                     {
                         StackedSkillInfos = new List<SkillInfo>();
                         yield break;
@@ -433,28 +534,131 @@ public class MultipleSkills : MonoBehaviourPunCallbacks
     [PunRPC]
     public void SetTargetSkill(int playerID, int skillIndex)
     {
-        // [Harness mod - phase 2] A scripted line answers here, before the
-        // recorder sees anything, so the recorded row carries what the script
-        // asked for rather than the value the AI computed and we discard.
-        // A false return is never "the script declined" -- TryAnswerStep has
-        // already aborted the job on a mismatch -- so do not fall through.
+        // [Harness mod - phase 2 / exam select] A scripted line answers here,
+        // before the recorder sees anything, so the recorded row carries what
+        // the script asked for rather than the value the AI computed and we
+        // discard. A false return is never "the script declined" --
+        // TryAnswerStep has already aborted the job on a mismatch -- so do not
+        // fall through.
+        //
+        // IDENTITIES ON THE WIRE. `skillIndex` is a 0-based index into THIS
+        // prompt's skillInfos_active -- DCGO's own list order -- while our
+        // engine names a queued trigger by its own TriggerOrder slot. Passing
+        // one value space off as the other picks a different trigger, and out
+        // of range it makes DCGO CLEAR the entire trigger stack and play on
+        // without it (see the guard in Activate above). So the preferred answer
+        // names the trigger's SOURCE CARD via `select_card_ids` (exactly one
+        // id) and is resolved here against the prompt's own candidates, the
+        // same shape the other selection hooks use.
+        //
+        // A card with two stacked triggers (an [On Deletion] and an
+        // <Ascension> on the same deleted carrier) offers the SAME identity
+        // twice, and here that is the common case rather than an edge -- so
+        // occurrence order is NOT assumed. `select_ordinal` then disambiguates
+        // as the 0-based position AMONG that card's own candidates, and its
+        // absence at an ambiguous prompt aborts with every candidate named.
+        //
+        // `select_value` alone remains supported as the raw DCGO skill index,
+        // but it is now RANGE-CHECKED: out of range aborts as a finding instead
+        // of silently clearing the stack. It never combines with
+        // `select_card_ids` -- an index and an identity answering one prompt is
+        // the value-space confusion this hook exists to end. `select_cancel` is
+        // DCGO's "Don't activate these effects" (-1).
         if (Digimon.Harness.InputDriver.IsActive)
         {
+            List<string> __candidateIds = ScriptedCandidateCardIds();
+
             Digimon.Harness.HarnessJobStep __step;
             if (!Digimon.Harness.InputDriver.TryAnswerStep(
                     playerID, Digimon.Harness.InputDriver.KindMultipleSkills,
-                    1, null, out __step))
+                    1, __candidateIds, out __step))
             {
                 return;
             }
-            if (__step.select_value == int.MinValue)
+
+            if (__step.select_cancel)
+            {
+                // DCGO only offers "Don't activate these effects" when every
+                // stacked effect is skippable. The scripted path never opens
+                // that panel, so re-check the gate: declining a MANDATORY
+                // trigger stack would drop those triggers and play on, which is
+                // the same silent-wrong-game the index range check prevents.
+                if (!ScriptedStackIsAllSkippable())
+                {
+                    Digimon.Harness.InputDriver.Abort(
+                        "MultipleSkills: select_cancel declines the whole trigger stack, but not " +
+                        "every stacked effect is optional " + DescribeScriptedCandidates() +
+                        " -- DCGO would not offer that choice here");
+                    return;
+                }
+                skillIndex = -1;
+            }
+            else if (__step.select_card_ids != null && __step.select_card_ids.Length > 0)
+            {
+                if (__step.select_card_ids.Length != 1)
+                {
+                    Digimon.Harness.InputDriver.Abort(
+                        "MultipleSkills is a single-pick prompt but the step names " +
+                        __step.select_card_ids.Length + " cards: " +
+                        Digimon.Harness.SelectionAnswer.Describe(__step));
+                    return;
+                }
+
+                if (__step.select_value != int.MinValue)
+                {
+                    Digimon.Harness.InputDriver.Abort(
+                        "MultipleSkills: select_value is the raw DCGO-index fallback and cannot " +
+                        "combine with select_card_ids -- use select_ordinal to say WHICH of that " +
+                        "card's own triggers. Got: " +
+                        Digimon.Harness.SelectionAnswer.Describe(__step));
+                    return;
+                }
+
+                int __pick;
+                string __err;
+                if (!Digimon.Harness.SelectionAnswer.MatchOneWithOrdinal(
+                        __step.select_card_ids[0], __step.select_ordinal,
+                        __candidateIds, out __pick, out __err))
+                {
+                    Digimon.Harness.InputDriver.Abort(
+                        "MultipleSkills: " + __err + ". Candidates: " + DescribeScriptedCandidates());
+                    return;
+                }
+                skillIndex = __pick;
+            }
+            else if (__step.select_value != int.MinValue)
+            {
+                if (__candidateIds == null)
+                {
+                    Digimon.Harness.InputDriver.Abort(
+                        "MultipleSkills: select_value=" + __step.select_value + " cannot be " +
+                        "range-checked -- this prompt's candidate list could not be computed " +
+                        "(NOT MEASURED), and an unchecked index clears the trigger stack");
+                    return;
+                }
+                if (__step.select_value < 0 || __step.select_value >= __candidateIds.Count)
+                {
+                    Digimon.Harness.InputDriver.Abort(
+                        "MultipleSkills: select_value=" + __step.select_value + " is out of range " +
+                        "for the " + __candidateIds.Count + " active effect(s) " +
+                        DescribeScriptedCandidates() + ". DCGO would clear the whole trigger stack " +
+                        "and play on without those triggers. Name the trigger by its source card " +
+                        "with select_card_ids (+ select_ordinal when that card stacked more than " +
+                        "one trigger), or use select_cancel to decline the stack");
+                    return;
+                }
+                skillIndex = __step.select_value;
+            }
+            else
             {
                 Digimon.Harness.InputDriver.Abort(
-                    "MultipleSkills prompt needs select_value (the skill index), got: " +
-                    Digimon.Harness.SelectionAnswer.Describe(__step));
+                    "MultipleSkills prompt needs select_card_ids (the trigger's source card, " +
+                    "+ select_ordinal when that card stacked more than one trigger), " +
+                    "select_value (a raw 0-based DCGO skill index) or select_cancel, got: " +
+                    Digimon.Harness.SelectionAnswer.Describe(__step) +
+                    ". Candidates: " + DescribeScriptedCandidates());
                 return;
             }
-            skillIndex = __step.select_value;
         }
 
         // [Recording mod] trigger-order / multi-effect choice.
