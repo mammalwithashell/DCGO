@@ -1197,6 +1197,16 @@ public class TurnStateMachine : MonoBehaviourPunCallbacks
     // wait loop, so a decision that persists across iterations before it is
     // consumed must be logged exactly once.
     ICardEffect _recLoggedUseCardEffect = null;
+    // [Recording mod] The (index, skillIndex) pair a UseCardEffect decision was
+    // made WITH. Captured at the decision site because it cannot be recovered
+    // afterwards: CardEffects(timing, card) allocates a fresh ICardEffect on
+    // EVERY call (see any card script's `new ActivateClass()`), so the object
+    // stored in UseCardEffect is not reference-equal to anything a later
+    // EffectList() lookup returns, and value equality would not distinguish two
+    // declaration slots on one card. -1 means "no activation pending".
+    int _recActPermanentIndex = -1;
+    int _recActCardIndex = -1;
+    int _recActSkillIndex = -1;
 
     float _timer = 0f;
     bool _canPlayEmptyFrame = true;
@@ -1710,7 +1720,7 @@ public class TurnStateMachine : MonoBehaviourPunCallbacks
                         // so the scripted seam's promise above ("the recorder's
                         // mirror block below then logs the scripted decision exactly
                         // as it logs the brain's") finally holds for this shape too.
-                        MainPhaseAction __recAct = BuildActivateActionForRecording(UseCardEffect);
+                        MainPhaseAction __recAct = BuildActivateActionForRecording();
                         if (__recAct != null)
                         {
                             Digimon.Recording.GameRecorder.Instance?.LogAction(
@@ -1948,6 +1958,9 @@ public class TurnStateMachine : MonoBehaviourPunCallbacks
             BurstTamerFrameID = -1;
             AppFusionFrameIDs = new int[0];
             UseCardEffect = null;
+            _recActPermanentIndex = -1;
+            _recActCardIndex = -1;
+            _recActSkillIndex = -1;
             AttackingPermanent = null;
             DefendingPermanent = null;
 
@@ -3724,65 +3737,34 @@ public class TurnStateMachine : MonoBehaviourPunCallbacks
     /// finalized <c>UseCardEffect</c> decision, so the AI/harness path can mirror
     /// activations into the recording the way it already mirrors attacks and plays.
     ///
-    /// This is the exact INVERSE of <see cref="SetActSkill"/> /
-    /// <see cref="SetActCardSkill"/>, and it must stay that way: those two methods
-    /// define what (permanentIndex, skillIndex) and (cardIndex, skillIndex) MEAN,
-    /// so the indices are looked up in the very same lists they index --
-    /// <c>GetFieldPermanents()</c> + <c>EffectList(EffectTiming.OnDeclaration)</c>
-    /// for a permanent, <c>ActiveCardList</c> + <c>CanDeclareSkillList</c> for a
-    /// card. Reading a different list (e.g. GetBattleAreaPermanents, which walks
-    /// breeding) would yield an index that decodes to a different permanent.
-    ///
-    /// Reference equality is deliberate: two effects on one card can compare equal
-    /// by value while occupying different declaration slots.
+    /// This reads the indices captured by <see cref="SetActSkill"/> /
+    /// <see cref="SetActCardSkill"/> rather than searching for the effect object,
+    /// and it MUST stay that way. Searching is not merely fragile, it cannot work:
+    /// <c>CEntity_Effect.CardEffects(timing, card)</c> allocates a fresh
+    /// <c>ICardEffect</c> on every call -- every card script's OnDeclaration branch
+    /// begins `new ActivateClass()` -- so the instance sitting in UseCardEffect is
+    /// never reference-equal to anything a later <c>EffectList()</c> call returns.
+    /// (Value equality is no help either: two declaration slots on one card can
+    /// compare equal while meaning different abilities.) That is also why
+    /// SetActSkill stores the object and not the indices, and why the indices have
+    /// to be remembered separately at the decision site.
     /// </summary>
-    /// <returns>The action, or null when the effect belongs to neither list --
-    /// the caller logs that case rather than dropping it silently.</returns>
-    MainPhaseAction BuildActivateActionForRecording(ICardEffect effect)
+    /// <returns>The action, or null when no activation is pending -- the caller
+    /// logs that case rather than dropping it silently.</returns>
+    MainPhaseAction BuildActivateActionForRecording()
     {
-        if (effect == null || gameContext == null || gameContext.TurnPlayer == null)
+        if (_recActSkillIndex < 0)
         {
             return null;
         }
-
-        // Field permanent activation -- inverse of SetActSkill.
-        List<Permanent> field = gameContext.TurnPlayer.GetFieldPermanents();
-        if (field != null)
+        if (_recActPermanentIndex >= 0)
         {
-            for (int p = 0; p < field.Count; p++)
-            {
-                if (field[p] == null) continue;
-                List<ICardEffect> declarable = field[p].EffectList(EffectTiming.OnDeclaration);
-                if (declarable == null) continue;
-                for (int sk = 0; sk < declarable.Count; sk++)
-                {
-                    if (object.ReferenceEquals(declarable[sk], effect))
-                    {
-                        return new ActivatePermanentAction(p, sk);
-                    }
-                }
-            }
+            return new ActivatePermanentAction(_recActPermanentIndex, _recActSkillIndex);
         }
-
-        // Card activation ([Hand][Main] and friends) -- inverse of SetActCardSkill.
-        List<CardSource> active = gameContext.ActiveCardList;
-        if (active != null)
+        if (_recActCardIndex >= 0)
         {
-            for (int c = 0; c < active.Count; c++)
-            {
-                if (active[c] == null) continue;
-                List<ICardEffect> declarable = active[c].CanDeclareSkillList;
-                if (declarable == null) continue;
-                for (int sk = 0; sk < declarable.Count; sk++)
-                {
-                    if (object.ReferenceEquals(declarable[sk], effect))
-                    {
-                        return new ActivateCardAction(c, sk);
-                    }
-                }
-            }
+            return new ActivateCardAction(_recActCardIndex, _recActSkillIndex);
         }
-
         return null;
     }
 
@@ -3801,6 +3783,10 @@ public class TurnStateMachine : MonoBehaviourPunCallbacks
         if (0 <= skillIndex && skillIndex < UseSkillPermanent.EffectList(EffectTiming.OnDeclaration).Count)
         {
             this.UseCardEffect = UseSkillPermanent.EffectList(EffectTiming.OnDeclaration)[skillIndex];
+            // [Recording mod] remember WHICH permanent/skill, for the mirror.
+            _recActPermanentIndex = permanentIndex;
+            _recActCardIndex = -1;
+            _recActSkillIndex = skillIndex;
         }
     }
     #endregion
@@ -3818,6 +3804,10 @@ public class TurnStateMachine : MonoBehaviourPunCallbacks
         if (0 <= skillIndex && skillIndex < UseSkillCard.CanDeclareSkillList.Count)
         {
             this.UseCardEffect = UseSkillCard.CanDeclareSkillList[skillIndex];
+            // [Recording mod] remember WHICH card/skill, for the mirror.
+            _recActCardIndex = cardIndex;
+            _recActPermanentIndex = -1;
+            _recActSkillIndex = skillIndex;
         }
     }
     #endregion
