@@ -1192,6 +1192,11 @@ public class TurnStateMachine : MonoBehaviourPunCallbacks
     Permanent _recLoggedDefending = null;
     CardSource _recLoggedPlayCard = null;
     int _recLoggedTargetFrameID = -1;
+    // [Recording mod] UseCardEffect joins the memo tuple for the same reason the
+    // others are in it: the mirror below runs on EVERY iteration of the main-phase
+    // wait loop, so a decision that persists across iterations before it is
+    // consumed must be logged exactly once.
+    ICardEffect _recLoggedUseCardEffect = null;
 
     float _timer = 0f;
     bool _canPlayEmptyFrame = true;
@@ -1647,6 +1652,7 @@ public class TurnStateMachine : MonoBehaviourPunCallbacks
                         && object.ReferenceEquals(_recLoggedAttacking, AttackingPermanent)
                         && object.ReferenceEquals(_recLoggedDefending, DefendingPermanent)
                         && object.ReferenceEquals(_recLoggedPlayCard, PlayCard)
+                        && object.ReferenceEquals(_recLoggedUseCardEffect, UseCardEffect)
                         && _recLoggedTargetFrameID == TargetFrameID;
                     if (AttackingPermanent != null && !recAlreadyLogged)
                     {
@@ -1661,6 +1667,7 @@ public class TurnStateMachine : MonoBehaviourPunCallbacks
                         _recLoggedAttacking = AttackingPermanent;
                         _recLoggedDefending = DefendingPermanent;
                         _recLoggedPlayCard = PlayCard;
+                        _recLoggedUseCardEffect = UseCardEffect;
                         _recLoggedTargetFrameID = TargetFrameID;
                     }
                     else if (PlayCard != null && !recAlreadyLogged)
@@ -1677,10 +1684,64 @@ public class TurnStateMachine : MonoBehaviourPunCallbacks
                         _recLoggedAttacking = AttackingPermanent;
                         _recLoggedDefending = DefendingPermanent;
                         _recLoggedPlayCard = PlayCard;
+                        _recLoggedUseCardEffect = UseCardEffect;
                         _recLoggedTargetFrameID = TargetFrameID;
                     }
 
-                    if (PlayCard == null && UseCardEffect == null && UseCardEffect == null && AttackingPermanent == null)
+                    else if (UseCardEffect != null && !recAlreadyLogged)
+                    {
+                        // [Recording mod] The field-effect ACTIVATION decision --
+                        // [Main] activated abilities, <Delay>, <Training>.
+                        //
+                        // Upstream this mirror covered only AttackingPermanent and
+                        // PlayCard, even though the pass guard below already knew
+                        // UseCardEffect was a third decision shape. The result: an
+                        // activation was consumed normally -- the effect resolved,
+                        // the harness input was accepted -- but produced NO action
+                        // row, so StateDumper wrote no state row at that boundary
+                        // either. Every [Main] activated effect, every <Delay> and
+                        // every <Training> in the pool was therefore invisible to
+                        // the replay tooling and unmeasurable step-for-step by the
+                        // card-clause exam (found via
+                        // qa/dcgo-exams/EX12/EX12-043-effect0.yaml, Hakubamon).
+                        //
+                        // Reconstruct the SAME MainPhaseAction the human UI would
+                        // have queued -- inverting SetActSkill / SetActCardSkill --
+                        // so the scripted seam's promise above ("the recorder's
+                        // mirror block below then logs the scripted decision exactly
+                        // as it logs the brain's") finally holds for this shape too.
+                        MainPhaseAction __recAct = BuildActivateActionForRecording(UseCardEffect);
+                        if (__recAct != null)
+                        {
+                            Digimon.Recording.GameRecorder.Instance?.LogAction(
+                                gameContext.TurnPlayer.PlayerID,
+                                __recAct,
+                                gameContext.TurnPhase.ToString(),
+                                gameContext.TurnPlayer);
+                        }
+                        else
+                        {
+                            // Not silently dropped: an activation we cannot address
+                            // is a recorder gap we want to SEE, not one that looks
+                            // like the effect never happened.
+                            Debug.LogWarning(
+                                "[Recording mod] UseCardEffect activation could not be "
+                                + "reconstructed as a MainPhaseAction; no action row written for "
+                                + (UseCardEffect.EffectSourceCard != null
+                                    ? UseCardEffect.EffectSourceCard.CardID : "<unknown card>"));
+                        }
+                        _recDecisionLogged = true;
+                        _recLoggedAttacking = AttackingPermanent;
+                        _recLoggedDefending = DefendingPermanent;
+                        _recLoggedPlayCard = PlayCard;
+                        _recLoggedUseCardEffect = UseCardEffect;
+                        _recLoggedTargetFrameID = TargetFrameID;
+                    }
+
+                    // (The duplicated `UseCardEffect == null && UseCardEffect == null`
+                    // that used to stand here was the tell that this guard knew about
+                    // a decision shape the mirror above did not handle.)
+                    if (PlayCard == null && UseCardEffect == null && AttackingPermanent == null)
                     {
                         // [Recording mod] the AI's implicit end-of-turn is the
                         // human path's explicit PassAction.
@@ -1896,6 +1957,7 @@ public class TurnStateMachine : MonoBehaviourPunCallbacks
             _recLoggedAttacking = null;
             _recLoggedDefending = null;
             _recLoggedPlayCard = null;
+            _recLoggedUseCardEffect = null;
             _recLoggedTargetFrameID = -1;
 
             CardEffectCommons.ClearEffectLocations();
@@ -3656,6 +3718,73 @@ public class TurnStateMachine : MonoBehaviourPunCallbacks
     }
 
     #endregion
+
+    /// <summary>
+    /// [Recording mod] Rebuild the <c>MainPhaseAction</c> that corresponds to a
+    /// finalized <c>UseCardEffect</c> decision, so the AI/harness path can mirror
+    /// activations into the recording the way it already mirrors attacks and plays.
+    ///
+    /// This is the exact INVERSE of <see cref="SetActSkill"/> /
+    /// <see cref="SetActCardSkill"/>, and it must stay that way: those two methods
+    /// define what (permanentIndex, skillIndex) and (cardIndex, skillIndex) MEAN,
+    /// so the indices are looked up in the very same lists they index --
+    /// <c>GetFieldPermanents()</c> + <c>EffectList(EffectTiming.OnDeclaration)</c>
+    /// for a permanent, <c>ActiveCardList</c> + <c>CanDeclareSkillList</c> for a
+    /// card. Reading a different list (e.g. GetBattleAreaPermanents, which walks
+    /// breeding) would yield an index that decodes to a different permanent.
+    ///
+    /// Reference equality is deliberate: two effects on one card can compare equal
+    /// by value while occupying different declaration slots.
+    /// </summary>
+    /// <returns>The action, or null when the effect belongs to neither list --
+    /// the caller logs that case rather than dropping it silently.</returns>
+    MainPhaseAction BuildActivateActionForRecording(ICardEffect effect)
+    {
+        if (effect == null || gameContext == null || gameContext.TurnPlayer == null)
+        {
+            return null;
+        }
+
+        // Field permanent activation -- inverse of SetActSkill.
+        List<Permanent> field = gameContext.TurnPlayer.GetFieldPermanents();
+        if (field != null)
+        {
+            for (int p = 0; p < field.Count; p++)
+            {
+                if (field[p] == null) continue;
+                List<ICardEffect> declarable = field[p].EffectList(EffectTiming.OnDeclaration);
+                if (declarable == null) continue;
+                for (int sk = 0; sk < declarable.Count; sk++)
+                {
+                    if (object.ReferenceEquals(declarable[sk], effect))
+                    {
+                        return new ActivatePermanentAction(p, sk);
+                    }
+                }
+            }
+        }
+
+        // Card activation ([Hand][Main] and friends) -- inverse of SetActCardSkill.
+        List<CardSource> active = gameContext.ActiveCardList;
+        if (active != null)
+        {
+            for (int c = 0; c < active.Count; c++)
+            {
+                if (active[c] == null) continue;
+                List<ICardEffect> declarable = active[c].CanDeclareSkillList;
+                if (declarable == null) continue;
+                for (int sk = 0; sk < declarable.Count; sk++)
+                {
+                    if (object.ReferenceEquals(declarable[sk], effect))
+                    {
+                        return new ActivateCardAction(c, sk);
+                    }
+                }
+            }
+        }
+
+        return null;
+    }
 
     #region Activation effect permanent determination
     public void SetActSkill(int permanentIndex, int skillIndex)
