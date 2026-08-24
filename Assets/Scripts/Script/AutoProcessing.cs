@@ -775,6 +775,20 @@ public class AutoProcessing : MonoBehaviourPunCallbacks
     {
         List<SkillInfo> skillInfos = new List<SkillInfo>();
 
+        // [Harness mod] A coroutine can still be stepping while the game is torn
+        // down (job chaining, exit-to-menu). Every region below dereferences
+        // GManager.instance.turnStateMachine.gameContext, so without this guard
+        // the first statement throws NullReferenceException and kills the
+        // coroutine mid-flight. No game context means there are no skills to
+        // collect -- an empty list is the correct answer, not a crash.
+        if (GManager.instance == null
+            || GManager.instance.turnStateMachine == null
+            || GManager.instance.turnStateMachine.gameContext == null
+            || GManager.instance.turnStateMachine.gameContext.Players_ForTurnPlayer == null)
+        {
+            return skillInfos;
+        }
+
         #region player effect
         foreach (Player player in GManager.instance.turnStateMachine.gameContext.Players_ForTurnPlayer)
         {

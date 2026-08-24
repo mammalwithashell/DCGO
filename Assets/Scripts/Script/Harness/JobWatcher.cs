@@ -555,6 +555,44 @@ namespace Digimon.Harness
         /// </remarks>
         private IEnumerator LoadBattleSceneWhenPhotonReady()
         {
+            // [Harness mod] QUIESCE THE PREVIOUS GAME FIRST.
+            //
+            // Leaving the room and loading a scene does not stop the coroutines
+            // the previous job left running. They keep stepping against a
+            // GameContext that the teardown is pulling out from under them, and
+            // AutoProcessing.GetSkillInfos dereferences
+            // `GManager.instance.turnStateMachine.gameContext.Players_ForTurnPlayer`
+            // on its very first statement -- so a late AutoProcessCheck throws
+            // NullReferenceException, the coroutine dies mid-flight, and the NEXT
+            // job inherits a half-built state machine that never reaches a
+            // terminal outcome. The harness then reports a timeout with no result
+            // file, which reads like a hung game rather than a torn-down one.
+            //
+            // Observed 2026-08-24: three exam scenarios timed out reproducibly
+            // across two batches, always immediately after
+            // "leaving the previous job's Photon room". They were NOT bad
+            // scenarios -- the same lines pass when run as the first job of a
+            // batch.
+            //
+            // Stopping these is safe precisely because we are about to load a
+            // fresh BattleScene: nothing they could still do is wanted.
+            if (ContinuousController.instance != null)
+            {
+                ContinuousController.instance.StopAllCoroutines();
+            }
+            if (GManager.instance != null)
+            {
+                GManager.instance.StopAllCoroutines();
+                if (GManager.instance.autoProcessing != null)
+                {
+                    GManager.instance.autoProcessing.StopAllCoroutines();
+                }
+                if (GManager.instance.autoProcessing_CutIn != null)
+                {
+                    GManager.instance.autoProcessing_CutIn.StopAllCoroutines();
+                }
+            }
+
             if (PhotonNetwork.InRoom)
             {
                 Debug.Log("[Harness] leaving the previous job's Photon room");
