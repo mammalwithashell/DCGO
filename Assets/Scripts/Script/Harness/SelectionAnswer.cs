@@ -193,6 +193,124 @@ namespace Digimon.Harness
         }
 
         /// <summary>
+        /// Canonical form of a trigger name, so the two engines' spellings
+        /// compare equal: lowercase, with angle brackets and whitespace removed.
+        /// </summary>
+        /// <remarks>
+        /// Must stay behaviourally identical to the Rust side's
+        /// normalize_trigger_name (exam/scenario.rs), which filters out
+        /// whitespace and the angle brackets and then lowercases. Dropping
+        /// whitespace is load-bearing, not cosmetic: DCGO names multi-word
+        /// keyword effects WITH a space ("Armor Purge",
+        /// CardEffectFactory/KeyWordEffects/ArmorPurge.cs) while the printed
+        /// text brackets them.
+        /// </remarks>
+        public static string NormalizeTriggerName(string raw)
+        {
+            if (string.IsNullOrEmpty(raw)) return "";
+            System.Text.StringBuilder sb = new System.Text.StringBuilder(raw.Length);
+            foreach (char c in raw)
+            {
+                if (c == '<' || c == '>' || char.IsWhiteSpace(c)) continue;
+                sb.Append(char.ToLowerInvariant(c));
+            }
+            return sb.ToString();
+        }
+
+        /// <summary>
+        /// Resolve one wanted card id among a stack of simultaneous triggers by
+        /// naming WHICH trigger semantically -- its keyword -- instead of its
+        /// position.
+        /// </summary>
+        /// <param name="wanted">The trigger's source-card id.</param>
+        /// <param name="trigger">Keyword name from the step (normalized here).</param>
+        /// <param name="candidateIds">Source-card ids, in prompt order.</param>
+        /// <param name="candidateTriggers">Each candidate's own effect name
+        /// (ICardEffect.EffectName), index-aligned with candidateIds. Null means
+        /// NOT MEASURED and is an error, never a licence to fall back to
+        /// position.</param>
+        /// <remarks>
+        /// Filters by trigger FIRST, then by identity, mirroring the Rust
+        /// match_one_branch. Zero matches is a FINDING about the stack's SHAPE
+        /// -- our engine offered a branch DCGO did not stage, or named one that
+        /// is not a keyword effect here -- so it refuses loudly rather than
+        /// falling through to the first candidate. More than one match means the
+        /// same card staged the same keyword twice, which only select_ordinal
+        /// can separate.
+        /// </remarks>
+        public static bool MatchOneWithTrigger(string wanted, string trigger,
+                                               IList<string> candidateIds,
+                                               IList<string> candidateTriggers,
+                                               out int pick, out string error)
+        {
+            pick = -1;
+            error = null;
+
+            string want = wanted ?? "";
+            string wantTrigger = NormalizeTriggerName(trigger);
+
+            if (candidateIds == null || candidateTriggers == null)
+            {
+                error = "wanted card '" + want + "' trigger '" + wantTrigger +
+                        "' but the prompt's candidate list could not be computed " +
+                        "(NOT MEASURED), so triggers cannot be matched";
+                return false;
+            }
+
+            if (wantTrigger.Length == 0)
+            {
+                error = "select_trigger is empty after normalization -- name the " +
+                        "keyword, e.g. 'Ascension'";
+                return false;
+            }
+
+            List<int> matches = new List<int>();
+            int upper = candidateIds.Count < candidateTriggers.Count
+                ? candidateIds.Count : candidateTriggers.Count;
+            for (int c = 0; c < upper; c++)
+            {
+                if (!string.Equals(want, candidateIds[c] ?? "", StringComparison.Ordinal)) continue;
+                if (NormalizeTriggerName(candidateTriggers[c]) != wantTrigger) continue;
+                matches.Add(c);
+            }
+
+            if (matches.Count == 0)
+            {
+                error = "wanted card '" + want + "' with trigger '" + wantTrigger +
+                        "' is not among the offered branches [" +
+                        DescribeBranches(candidateIds, candidateTriggers) +
+                        "] -- the two engines disagree about what this stack contains";
+                return false;
+            }
+
+            if (matches.Count > 1)
+            {
+                error = "wanted card '" + want + "' with trigger '" + wantTrigger +
+                        "' is offered " + matches.Count + " times by [" +
+                        DescribeBranches(candidateIds, candidateTriggers) +
+                        "] -- one card staged the same keyword twice, so only " +
+                        "select_ordinal can separate them";
+                return false;
+            }
+
+            pick = matches[0];
+            return true;
+        }
+
+        /// <summary>Per-branch "id 'EffectName'", for the abort messages above.</summary>
+        static string DescribeBranches(IList<string> ids, IList<string> triggers)
+        {
+            if (ids == null) return "";
+            List<string> parts = new List<string>();
+            for (int i = 0; i < ids.Count; i++)
+            {
+                string t = (triggers != null && i < triggers.Count) ? triggers[i] : null;
+                parts.Add((ids[i] ?? "") + (string.IsNullOrEmpty(t) ? "" : " '" + t + "'"));
+            }
+            return string.Join(" | ", parts.ToArray());
+        }
+
+        /// <summary>
         /// One-line description of a step's selection payload, for abort
         /// messages. A hook that receives the WRONG payload shape for its
         /// prompt kind aborts with this, so the author can see exactly what

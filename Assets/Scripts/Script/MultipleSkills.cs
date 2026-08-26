@@ -92,6 +92,31 @@ public class MultipleSkills : MonoBehaviourPunCallbacks
     }
 
     /// <summary>
+    /// Each staged branch's own effect name (ICardEffect.EffectName), in prompt
+    /// order and index-aligned with <see cref="ScriptedCandidateCardIds"/>.
+    /// </summary>
+    /// <remarks>
+    /// This is what makes select_trigger resolvable: DCGO names a keyword effect
+    /// after the keyword itself -- SetUpICardEffect("Ascension", ...) at
+    /// CardEffectFactory/KeyWordEffects/Ascension.cs:13, likewise "Fortitude",
+    /// "Retaliation", "Armor Purge". Null (NOT MEASURED) propagates exactly as
+    /// it does for the id list: an unverifiable match is a wrong answer waiting
+    /// to happen, so the matcher errors rather than guessing.
+    /// </remarks>
+    List<string> ScriptedCandidateTriggerNames()
+    {
+        if (_scriptedActiveSkillInfos == null) return null;
+
+        List<string> names = new List<string>();
+        foreach (SkillInfo skillInfo in _scriptedActiveSkillInfos)
+        {
+            ICardEffect cardEffect = skillInfo != null ? skillInfo.CardEffect : null;
+            names.Add(cardEffect == null ? "" : (cardEffect.EffectName ?? ""));
+        }
+        return names;
+    }
+
+    /// <summary>
     /// Human-legible dump of the staged prompt for abort messages: index, source
     /// card id, and DCGO's own effect name. The effect name is diagnostics only
     /// -- it is NOT part of the wire vocabulary -- but it is what lets an author
@@ -614,9 +639,38 @@ public class MultipleSkills : MonoBehaviourPunCallbacks
                     return;
                 }
 
+                // select_trigger and select_ordinal name the same thing two
+                // ways -- semantically vs positionally -- so carrying both is an
+                // authoring error, not a preference to resolve silently.
+                if (!string.IsNullOrEmpty(__step.select_trigger)
+                    && __step.select_ordinal != int.MinValue)
+                {
+                    Digimon.Harness.InputDriver.Abort(
+                        "MultipleSkills: select_trigger and select_ordinal are mutually " +
+                        "exclusive -- keep select_trigger, because select_ordinal is a " +
+                        "position in THIS engine's own candidate list and the two engines " +
+                        "do not order that list the same way. Got: " +
+                        Digimon.Harness.SelectionAnswer.Describe(__step));
+                    return;
+                }
+
                 int __pick;
                 string __err;
-                if (!Digimon.Harness.SelectionAnswer.MatchOneWithOrdinal(
+                if (!string.IsNullOrEmpty(__step.select_trigger))
+                {
+                    if (!Digimon.Harness.SelectionAnswer.MatchOneWithTrigger(
+                            __step.select_card_ids[0], __step.select_trigger,
+                            __candidateIds, ScriptedCandidateTriggerNames(),
+                            out __pick, out __err))
+                    {
+                        Digimon.Harness.InputDriver.Abort(
+                            "MultipleSkills: " + __err + ". Candidates: " +
+                            DescribeScriptedCandidates());
+                        return;
+                    }
+                    skillIndex = __pick;
+                }
+                else if (!Digimon.Harness.SelectionAnswer.MatchOneWithOrdinal(
                         __step.select_card_ids[0], __step.select_ordinal,
                         __candidateIds, out __pick, out __err))
                 {
@@ -624,7 +678,10 @@ public class MultipleSkills : MonoBehaviourPunCallbacks
                         "MultipleSkills: " + __err + ". Candidates: " + DescribeScriptedCandidates());
                     return;
                 }
-                skillIndex = __pick;
+                else
+                {
+                    skillIndex = __pick;
+                }
             }
             else if (__step.select_value != int.MinValue)
             {

@@ -173,6 +173,31 @@ namespace Digimon.Harness
         /// </remarks>
         public int select_ordinal = int.MinValue;
 
+        /// <summary>
+        /// Which of ONE card's simultaneous triggers to resolve, named by its
+        /// KEYWORD rather than by position -- the semantic sibling of
+        /// <see cref="select_ordinal"/>, and the preferred one.
+        /// </summary>
+        /// <remarks>
+        /// <see cref="select_ordinal"/> is a 0-based position in the PROMPTING
+        /// ENGINE'S OWN candidate list, and the two engines do not build that
+        /// list in the same order. EX12-047 Amaterasumon is the worked example:
+        /// DCGO registers Ascension (EX12_047.cs:41) BEFORE the printed
+        /// [On Deletion] (:182), while the Rust engine enumerates them the other
+        /// way round -- so one authored ordinal silently means a DIFFERENT
+        /// trigger on each side, and both then diverge several rows later
+        /// against a board the wrong effect has already mutated.
+        ///
+        /// The value arrives NORMALIZED (lowercased, with angle brackets and
+        /// whitespace stripped) so that the printed "Armor Purge" keyword and
+        /// DCGO's own effect name both land on "armorpurge". Normalize this side
+        /// identically -- see SelectionAnswer.NormalizeTriggerName.
+        ///
+        /// Mutually exclusive with <see cref="select_ordinal"/>; a step carrying
+        /// both is refused rather than silently preferring one.
+        /// </remarks>
+        public string select_trigger = null;
+
         /// <summary>True when <see cref="select_bool"/> carries an answer
         /// (a bare bool cannot distinguish "false" from "absent").</summary>
         public bool select_has_bool;
@@ -194,6 +219,7 @@ namespace Digimon.Harness
             (select_card_ids != null && select_card_ids.Length > 0)
             || select_value != int.MinValue
             || select_ordinal != int.MinValue
+            || !string.IsNullOrEmpty(select_trigger)
             || select_has_bool
             || select_cancel;
     }
