@@ -198,6 +198,30 @@ namespace Digimon.Harness
         /// </remarks>
         public string select_trigger = null;
 
+        /// <summary>
+        /// The branch to EXCLUDE -- the complement of
+        /// <see cref="select_trigger"/>, for a wanted branch that carries no
+        /// keyword of its own.
+        /// </summary>
+        /// <remarks>
+        /// EX12-047 Amaterasumon is the case: its deletion stack is
+        /// [Ascension, the printed On Deletion], and only the first can be
+        /// named by keyword. Nothing else separates them -- same source card,
+        /// same timing (both register under OnDestroyedAnyone), same
+        /// optionality.
+        ///
+        /// Neither engine can answer "which branch is NOT a keyword" without a
+        /// registry of what counts as one, and this repo has none: no
+        /// IsKeywordEffect flag, no keyword enum, and Decode's effect name is
+        /// parameterized, so a hardcoded name list would be brittle. Both sides
+        /// CAN drop a NAMED branch and require exactly one survivor, which is
+        /// what this field asks for.
+        ///
+        /// Arrives normalized, same as select_trigger. Mutually exclusive with
+        /// both select_trigger and select_ordinal.
+        /// </remarks>
+        public string select_trigger_not = null;
+
         /// <summary>True when <see cref="select_bool"/> carries an answer
         /// (a bare bool cannot distinguish "false" from "absent").</summary>
         public bool select_has_bool;
@@ -220,6 +244,7 @@ namespace Digimon.Harness
             || select_value != int.MinValue
             || select_ordinal != int.MinValue
             || !string.IsNullOrEmpty(select_trigger)
+            || !string.IsNullOrEmpty(select_trigger_not)
             || select_has_bool
             || select_cancel;
     }

@@ -654,9 +654,38 @@ public class MultipleSkills : MonoBehaviourPunCallbacks
                     return;
                 }
 
+                // trigger_not is the complement of trigger; carrying both, or
+                // pairing either with the positional ordinal, gives two answers
+                // to one question.
+                if (!string.IsNullOrEmpty(__step.select_trigger_not)
+                    && (!string.IsNullOrEmpty(__step.select_trigger)
+                        || __step.select_ordinal != int.MinValue))
+                {
+                    Digimon.Harness.InputDriver.Abort(
+                        "MultipleSkills: select_trigger_not names a branch by exclusion, so " +
+                        "it cannot combine with select_trigger (which names one directly) " +
+                        "or select_ordinal (a per-engine position). Got: " +
+                        Digimon.Harness.SelectionAnswer.Describe(__step));
+                    return;
+                }
+
                 int __pick;
                 string __err;
-                if (!string.IsNullOrEmpty(__step.select_trigger))
+                if (!string.IsNullOrEmpty(__step.select_trigger_not))
+                {
+                    if (!Digimon.Harness.SelectionAnswer.MatchOneExcludingTrigger(
+                            __step.select_card_ids[0], __step.select_trigger_not,
+                            __candidateIds, ScriptedCandidateTriggerNames(),
+                            out __pick, out __err))
+                    {
+                        Digimon.Harness.InputDriver.Abort(
+                            "MultipleSkills: " + __err + ". Candidates: " +
+                            DescribeScriptedCandidates());
+                        return;
+                    }
+                    skillIndex = __pick;
+                }
+                else if (!string.IsNullOrEmpty(__step.select_trigger))
                 {
                     if (!Digimon.Harness.SelectionAnswer.MatchOneWithTrigger(
                             __step.select_card_ids[0], __step.select_trigger,

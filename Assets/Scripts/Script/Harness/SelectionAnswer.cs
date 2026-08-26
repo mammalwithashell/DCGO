@@ -297,6 +297,94 @@ namespace Digimon.Harness
             return true;
         }
 
+        /// <summary>
+        /// Resolve one wanted card id among a stack of simultaneous triggers by
+        /// naming the branch to EXCLUDE -- the complement of
+        /// <see cref="MatchOneWithTrigger"/>.
+        /// </summary>
+        /// <remarks>
+        /// For a wanted branch with no keyword of its own this is the only handle
+        /// either engine can compute without a registry of what counts as a
+        /// keyword. Mirrors the Rust `match_one_branch` exclusion arm: take the
+        /// branches this card offers, drop the ones whose name matches, and
+        /// require EXACTLY ONE survivor.
+        ///
+        /// Both failure modes refuse rather than guess, for the same reason the
+        /// positive form does. Zero survivors means the stack is smaller than the
+        /// author believed, or every branch IS the excluded keyword. More than one
+        /// means the exclusion did not isolate a branch, so it has run out of
+        /// resolving power exactly as a repeated keyword does.
+        /// </remarks>
+        public static bool MatchOneExcludingTrigger(string wanted, string excludedTrigger,
+                                                    IList<string> candidateIds,
+                                                    IList<string> candidateTriggers,
+                                                    out int pick, out string error)
+        {
+            pick = -1;
+            error = null;
+
+            string want = wanted ?? "";
+            string excluded = NormalizeTriggerName(excludedTrigger);
+
+            if (candidateIds == null || candidateTriggers == null)
+            {
+                error = "wanted card '" + want + "' excluding trigger '" + excluded +
+                        "' but the prompt's candidate list could not be computed " +
+                        "(NOT MEASURED), so branches cannot be matched";
+                return false;
+            }
+
+            if (excluded.Length == 0)
+            {
+                error = "select_trigger_not is empty after normalization -- name the " +
+                        "keyword to exclude, e.g. 'Ascension'";
+                return false;
+            }
+
+            List<int> mine = new List<int>();
+            int upper = candidateIds.Count < candidateTriggers.Count
+                ? candidateIds.Count : candidateTriggers.Count;
+            for (int c = 0; c < upper; c++)
+            {
+                if (string.Equals(want, candidateIds[c] ?? "", StringComparison.Ordinal))
+                {
+                    mine.Add(c);
+                }
+            }
+
+            if (mine.Count == 0)
+            {
+                error = "wanted card '" + want + "' is not among the offered branches [" +
+                        DescribeBranches(candidateIds, candidateTriggers) + "]";
+                return false;
+            }
+
+            List<int> survivors = new List<int>();
+            foreach (int i in mine)
+            {
+                if (NormalizeTriggerName(candidateTriggers[i]) != excluded) survivors.Add(i);
+            }
+
+            if (survivors.Count == 0)
+            {
+                error = "select_trigger_not '" + excluded + "' excluded every branch card '" +
+                        want + "' offers, leaving nothing to pick [" +
+                        DescribeBranches(candidateIds, candidateTriggers) + "]";
+                return false;
+            }
+
+            if (survivors.Count > 1)
+            {
+                error = "select_trigger_not '" + excluded + "' leaves " + survivors.Count +
+                        " branches of card '" + want + "', so it does not say which [" +
+                        DescribeBranches(candidateIds, candidateTriggers) + "]";
+                return false;
+            }
+
+            pick = survivors[0];
+            return true;
+        }
+
         /// <summary>Per-branch "id 'EffectName'", for the abort messages above.</summary>
         static string DescribeBranches(IList<string> ids, IList<string> triggers)
         {
