@@ -316,14 +316,28 @@ namespace Digimon.Harness
                                           new int[0], -1, new int[0]);
             }
 
-            // Activate a [Main] effect on a card in hand.
+            // Activate a [Main] effect on a card in hand -- or, when the card
+            // has none, declare its <Link> from hand. Our HAND_EFFECT range is
+            // one bit per hand slot, and the engine's decoder gives that bit
+            // to the [Hand][Main] first and the from-hand DigiLink second
+            // (Game::hand_effect_slot_is_link). Mirror that order over DCGO's
+            // POSITIONAL SkillIndex into CardSource.CanDeclareSkillList (the
+            // CanUse-filtered list SetActCardSkill indexes): the first
+            // declarable that is NOT the link declaration, else the link.
             if (actionId >= Digimon.Recording.ActionSpace.HAND_EFFECT_START
                 && actionId < Digimon.Recording.ActionSpace.HAND_EFFECT_END)
             {
                 int handSlot = actionId - Digimon.Recording.ActionSpace.HAND_EFFECT_START;
                 CardSource card = HandCardAt(actor, handSlot, ref error);
                 if (card == null) return null;
-                return new ActivateCardAction(card.CardIndex, 0);
+                int skillIndex = FindHandDeclarableSkillIndex(card);
+                if (skillIndex < 0)
+                {
+                    error = "hand slot " + handSlot + " (" + card.CardID
+                            + ") has no activatable effect and no <Link> declaration";
+                    return null;
+                }
+                return new ActivateCardAction(card.CardIndex, skillIndex);
             }
 
             // Attack.
@@ -484,6 +498,34 @@ namespace Digimon.Harness
                 return true;
             }
             return effect.EffectName != null && effect.EffectName.StartsWith("Link (Cost:");
+        }
+
+        /// <summary>
+        /// The POSITIONAL index, into <c>card.CanDeclareSkillList</c>, that a
+        /// HAND_EFFECT bit names: the first activatable effect that is NOT the
+        /// <c>&lt;Link&gt;</c> declaration, else the link declaration itself,
+        /// else -1. The order is the engine decoder's ([Hand][Main] first,
+        /// link second), so a card carrying both is addressed the same way on
+        /// both sides -- and the same one-declarable-per-hand-slot limit
+        /// applies on both.
+        /// </summary>
+        private static int FindHandDeclarableSkillIndex(CardSource card)
+        {
+            if (card == null) return -1;
+            List<ICardEffect> effects = card.CanDeclareSkillList;
+            int linkIndex = -1;
+            for (int i = 0; i < effects.Count; i++)
+            {
+                ICardEffect e = effects[i];
+                if (e == null || !(e is ActivateICardEffect)) continue;
+                if (IsLinkDeclaration(e))
+                {
+                    if (linkIndex < 0) linkIndex = i;
+                    continue;
+                }
+                return i;
+            }
+            return linkIndex;
         }
 
         private static CardSource HandCardAt(Player actor, int handSlot, ref string error)
