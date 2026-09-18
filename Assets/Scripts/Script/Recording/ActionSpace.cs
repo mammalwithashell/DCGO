@@ -38,6 +38,7 @@ namespace Digimon.Recording
         public const ushort BREEDING_SOURCE_CARRIERS = 2;
         public const ushort BREEDING_TARGET = 14;
         public const ushort CONCEDE_GAME = 93;
+        public const ushort FIELD_EFFECT_SLOT_FOR_LINK = 3;
         public const ushort FIELD_EFFECT_SLOT_FOR_MAIN = 2;
         public const ushort FIELD_EFFECT_SLOT_FOR_OVERCLOCK = 0;
         public const ushort HAND_MAIN_LIMIT = 30;

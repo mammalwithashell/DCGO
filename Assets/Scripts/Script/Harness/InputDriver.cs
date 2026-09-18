@@ -376,32 +376,114 @@ namespace Digimon.Harness
                 return new PlayCardAction(card.CardIndex, frameId, new int[0], -1, new int[0]);
             }
 
-            // Activate a [Main] effect on a permanent.
+            // Activate an ability on a permanent: the [Main] sub-slot or the
+            // DigiLink sub-slot. Our per-permanent effect range is SEMANTIC
+            // (0 = Overclock, 2 = [Main], 3 = DigiLink) while DCGO's
+            // ActivatePermanentAction.SkillIndex is POSITIONAL -- an index into
+            // the permanent's EffectList(EffectTiming.OnDeclaration), see
+            // TurnStateMachine.SetActSkill -- so each sub-slot is resolved to
+            // the position of the effect it names rather than assumed to be 0.
             if (actionId >= Digimon.Recording.ActionSpace.FIELD_EFFECT_START
                 && actionId < Digimon.Recording.ActionSpace.FIELD_EFFECT_END)
             {
                 int rel = actionId - Digimon.Recording.ActionSpace.FIELD_EFFECT_START;
                 int slot = rel / Digimon.Recording.ActionSpace.EFFECTS_PER_PERMANENT;
                 int sub  = rel % Digimon.Recording.ActionSpace.EFFECTS_PER_PERMANENT;
-                if (sub != Digimon.Recording.ActionSpace.FIELD_EFFECT_SLOT_FOR_MAIN)
+                bool wantLink;
+                if (sub == Digimon.Recording.ActionSpace.FIELD_EFFECT_SLOT_FOR_MAIN)
                 {
-                    // ActionEncoder maps DCGO's positional SkillIndex 0 onto
-                    // the semantic [Main] sub-slot and refuses anything else;
-                    // the inverse has to refuse the same set, or it would queue
-                    // an Overclock as though it were a [Main] activation.
-                    error = "field-effect sub-slot " + sub + " is not the [Main] slot";
+                    wantLink = false;
+                }
+                else if (sub == Digimon.Recording.ActionSpace.FIELD_EFFECT_SLOT_FOR_LINK)
+                {
+                    wantLink = true;
+                }
+                else
+                {
+                    // Anything else (Overclock lives in the end-of-turn phase,
+                    // the rest are unassigned) has no main-phase shape; refuse
+                    // rather than queue something the scenario did not ask for.
+                    error = "field-effect sub-slot " + sub + " is neither the [Main] slot nor the link slot";
                     return null;
                 }
-                if (slot >= actor.GetFieldPermanents().Count)
+                List<Permanent> field = actor.GetFieldPermanents();
+                if (slot >= field.Count)
                 {
                     error = "field-effect slot " + slot + " is empty";
                     return null;
                 }
-                return new ActivatePermanentAction(slot, 0);
+                int skillIndex = FindDeclarableSkillIndex(field[slot], wantLink);
+                if (skillIndex < 0)
+                {
+                    error = (wantLink ? "link" : "[Main]") + " sub-slot on field slot " + slot
+                            + " (" + (field[slot].TopCard == null ? "?" : field[slot].TopCard.CardID)
+                            + ") names no " + (wantLink ? "<Link> declaration" : "activatable [Main] effect")
+                            + " in the permanent's OnDeclaration list";
+                    return null;
+                }
+                return new ActivatePermanentAction(slot, skillIndex);
             }
 
             error = "action id " + actionId + " has no MainPhaseAction shape";
             return null;
+        }
+
+        /// <summary>
+        /// The POSITIONAL index, into <c>permanent.EffectList(EffectTiming.OnDeclaration)</c>,
+        /// of the effect our semantic sub-slot names: the <c>&lt;Link&gt;</c>
+        /// declaration (<c>CardEffectFactory.LinkEffect</c>) when
+        /// <paramref name="wantLink"/>, otherwise the first activatable effect
+        /// that is NOT the link declaration -- the [Main] ability. -1 when the
+        /// list holds no such effect.
+        /// </summary>
+        /// <remarks>
+        /// The same list, same order, that <c>SetActSkill</c> indexes into when
+        /// the queued action resolves, and that the human UI enumerates when it
+        /// builds the field card's command panel (TurnStateMachine, "activated
+        /// effect" region) -- so the index handed back here is exactly the one
+        /// a click on that command would have queued. Only
+        /// <c>ActivateICardEffect</c> entries are candidates, as in the UI; the
+        /// list can also hold non-activatable OnDeclaration effects, which is
+        /// why the position is searched for rather than assumed to be 0.
+        /// </remarks>
+        private static int FindDeclarableSkillIndex(Permanent permanent, bool wantLink)
+        {
+            if (permanent == null) return -1;
+            List<ICardEffect> effects = permanent.EffectList(EffectTiming.OnDeclaration);
+            for (int i = 0; i < effects.Count; i++)
+            {
+                ICardEffect e = effects[i];
+                if (e == null || !(e is ActivateICardEffect)) continue;
+                if (IsLinkDeclaration(e) == wantLink) return i;
+            }
+            return -1;
+        }
+
+        /// <summary>
+        /// Whether <paramref name="effect"/> is the <c>&lt;Link&gt;</c>
+        /// declaration <c>CardEffectFactory.LinkEffect</c> builds -- the
+        /// "Link (Cost: N)" command on an Appmon Link Digimon.
+        /// </summary>
+        /// <remarks>
+        /// Recognised STRUCTURALLY, by the description LinkEffect stamps
+        /// (<c>DataBase.LinkEffectDiscription()</c>, run through the same
+        /// <c>ReplaceToASCII</c> as <c>SetUpActivateClass</c> applies), with the
+        /// effect-name prefix as a fallback should a card script build the
+        /// class by hand with a different description. Never by position: a
+        /// card that adds its [Main] AFTER its LinkEffect would otherwise have
+        /// the two swapped, and the recorder's positional-0 assumption
+        /// (<c>ActionEncoder.EncodeActivatePermanent</c>) is the bug this
+        /// driver must not inherit.
+        /// </remarks>
+        public static bool IsLinkDeclaration(ICardEffect effect)
+        {
+            if (effect == null) return false;
+            string wanted = DataBase.ReplaceToASCII(DataBase.LinkEffectDiscription());
+            if (!string.IsNullOrEmpty(effect.EffectDiscription) && effect.EffectDiscription == wanted)
+            {
+                return true;
+            }
+            return effect.EffectName != null && effect.EffectName.StartsWith("Link (Cost:");
         }
 
         private static CardSource HandCardAt(Player actor, int handSlot, ref string error)

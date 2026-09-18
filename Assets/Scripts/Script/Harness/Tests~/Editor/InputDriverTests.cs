@@ -250,5 +250,50 @@ namespace Digimon.Harness.Tests
                 0, InputDriver.KindOptionalSkill, 1, null, out HarnessJobStep after));
             Assert.IsFalse(InputDriver.IsActive);
         }
+
+        // -- the <Link> declaration recogniser -----------------------------
+        // BuildMainPhaseAction resolves our SEMANTIC link sub-slot
+        // (FIELD_EFFECT_SLOT_FOR_LINK) to the POSITIONAL index of the
+        // LinkEffect ActivateClass in the permanent's OnDeclaration list, and
+        // the [Main] sub-slot to the first activatable effect that is NOT it.
+        // Both hinge on this predicate, which is exercised here without a
+        // game: an ActivateClass set up exactly as CardEffectFactory.LinkEffect
+        // sets one up (same description stamp, same name prefix).
+
+        private static ActivateClass ActivateClassNamed(string name, string description)
+        {
+            ActivateClass a = new ActivateClass();
+            a.SetUpICardEffect(name, _ => true, null);
+            a.SetUpActivateClass(null, null, -1, true, description);
+            return a;
+        }
+
+        [Test]
+        public void IsLinkDeclaration_RecognisesTheLinkEffectByItsDescriptionStamp()
+        {
+            ActivateClass link = ActivateClassNamed(
+                "Link (Cost: 2)", DataBase.LinkEffectDiscription());
+            Assert.IsTrue(InputDriver.IsLinkDeclaration(link));
+        }
+
+        [Test]
+        public void IsLinkDeclaration_FallsBackToTheNamePrefix()
+        {
+            // A hand-built declaration with a different description still
+            // counts by its "Link (Cost: N)" name -- the fallback exists so a
+            // card script that does not go through the factory is not
+            // misfiled as a [Main] ability.
+            ActivateClass link = ActivateClassNamed("Link (Cost: 0)", "custom text");
+            Assert.IsTrue(InputDriver.IsLinkDeclaration(link));
+        }
+
+        [Test]
+        public void IsLinkDeclaration_RejectsAnOrdinaryMainAbility()
+        {
+            ActivateClass main = ActivateClassNamed(
+                "[Main] Digiburst 1", "[Main] <Digiburst 1> (Trash 1 card ...)");
+            Assert.IsFalse(InputDriver.IsLinkDeclaration(main));
+            Assert.IsFalse(InputDriver.IsLinkDeclaration(null));
+        }
     }
 }
