@@ -160,6 +160,52 @@ namespace Digimon.Harness.Tests
             Assert.AreEqual(0, job.inputs[4].select_card_ids.Length);
         }
 
+        // A DNA (Jogress) digivolution row: a main-phase ACTION carrying the
+        // two materials. The pair must NOT make the step read as a selection
+        // answer -- InputDriver.TryAnswer aborts the job when a selection step
+        // arrives at an action-id prompt, so routing the materials through
+        // select_card_ids would make every DNA line unrunnable.
+        private const string DnaJob = @"{
+            ""job_id"": ""exam-dna"",
+            ""policy"": ""scripted"",
+            ""decks"": { ""p0"": [""BT8-084""], ""p1"": [""ST1-03""] },
+            ""inputs"": [
+                { ""actor"": 0, ""action_id"": 63, ""expect_prompt"": ""main_phase"", ""dna_materials"": [""ST1-04"", ""P-137""] },
+                { ""actor"": 0, ""action_id"": 62, ""expect_prompt"": ""main_phase"" }
+            ],
+            ""first_player"": 0,
+            ""seed"": 424242,
+            ""limits"": { ""max_turns"": 40, ""timeout_seconds"": 180 }
+        }";
+
+        [Test]
+        public void DnaJob_MaterialsParseInDeclarationOrder()
+        {
+            HarnessJob job = HarnessJob.Parse(DnaJob);
+            Assert.IsNotNull(job);
+            CollectionAssert.AreEqual(
+                new[] { "ST1-04", "P-137" }, job.inputs[0].dna_materials);
+            Assert.AreEqual(63, job.inputs[0].action_id);
+        }
+
+        [Test]
+        public void DnaJob_MaterialsDoNotMakeTheStepASelection()
+        {
+            HarnessJob job = HarnessJob.Parse(DnaJob);
+            Assert.IsFalse(
+                job.inputs[0].IsSelection,
+                "a DNA row is an ACTION: it must reach BuildMainPhaseAction, not a selection hook");
+            Assert.AreEqual(0, job.inputs[0].select_card_ids.Length);
+        }
+
+        [Test]
+        public void DnaJob_AbsentMaterialsDefaultToEmpty()
+        {
+            HarnessJob job = HarnessJob.Parse(DnaJob);
+            Assert.IsNotNull(job.inputs[1].dna_materials);
+            Assert.AreEqual(0, job.inputs[1].dna_materials.Length);
+        }
+
         [Test]
         public void ScriptedPolicyWithNoInputs_IsRejected()
         {

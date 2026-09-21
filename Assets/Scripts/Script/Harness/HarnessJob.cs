@@ -67,6 +67,10 @@ namespace Digimon.Harness
                     {
                         job.inputs[i].select_card_ids = new string[0];
                     }
+                    if (job.inputs[i].dna_materials == null)
+                    {
+                        job.inputs[i].dna_materials = new string[0];
+                    }
                 }
 
                 // A scripted job with no line would start a game nobody drives
@@ -232,6 +236,32 @@ namespace Digimon.Harness
 
         /// <summary>Decline / cancel the prompt outright.</summary>
         public bool select_cancel;
+
+        // -- DNA (Jogress) digivolution payload ---------------------------
+
+        /// <summary>
+        /// The two materials of a DNA digivolution, as their permanents'
+        /// TOP-CARD ids, in declaration order. Only meaningful on a
+        /// `main_phase` step whose <see cref="action_id"/> is in the
+        /// DNA_DIGIVOLVE range; empty on every other step.
+        /// </summary>
+        /// <remarks>
+        /// Deliberately NOT <see cref="select_card_ids"/>, and deliberately
+        /// NOT part of <see cref="IsSelection"/>. A DNA digivolution is ONE
+        /// decision on this side -- a single <c>PlayCardAction</c> carrying
+        /// <c>JogressEvoRootsFrameIDs</c>, with no prompt -- while the Rust
+        /// engine asks for the two materials as separate
+        /// <c>SelectionKind::Material</c> prompts. Putting them in
+        /// `select_card_ids` would make the step read as a selection answer,
+        /// which <c>InputDriver.TryAnswer</c> correctly aborts on when it
+        /// arrives at an action-id prompt.
+        ///
+        /// <c>JsonUtility</c> ignores unknown keys, so a job written by a
+        /// newer harness still parses on an older player -- it would simply
+        /// fail to build the action and abort with a legible reason, which is
+        /// the right outcome for a line the player cannot run.
+        /// </remarks>
+        public string[] dna_materials = new string[0];
 
         /// <summary>
         /// True when this step carries a selection payload -- i.e. it answers

@@ -51,6 +51,8 @@ namespace Digimon.Harness
     public static class InputDriver
     {
         private static ScriptedLine _line;
+        /// Step consumed by the last action-id answer -- see <see cref="LastActionStep"/>.
+        private static HarnessJobStep _lastActionStep;
 
         // -- Prompt kinds -------------------------------------------------
         // The CLOSED 13-kind vocabulary. These strings are the same literals
@@ -154,8 +156,28 @@ namespace Digimon.Harness
                 return false;
             }
 
+            _lastActionStep = step;
             actionId = step.action_id;
             return true;
+        }
+
+        /// <summary>
+        /// The step the most recent <see cref="TryAnswer(int, PromptContext, out int)"/>
+        /// consumed, or null before the first one.
+        /// </summary>
+        /// <remarks>
+        /// The int overload hands back only the action id, but one action
+        /// family needs more than an id to be built: a DNA digivolution is a
+        /// single <c>PlayCardAction</c> carrying BOTH materials, and the
+        /// 2192-space bit names only the hand slot. Rather than change the
+        /// signature at both TurnStateMachine call sites (which call
+        /// <see cref="BuildMainPhaseAction"/> on the very next line), the step
+        /// is kept here and read back by the DNA arm. Every other arm ignores
+        /// it.
+        /// </remarks>
+        public static HarnessJobStep LastActionStep
+        {
+            get { return _lastActionStep; }
         }
 
         /// <summary>
@@ -274,10 +296,13 @@ namespace Digimon.Harness
         /// <c>Digimon.Recording.ActionEncoder.EncodeMainPhaseAction</c>. It
         /// covers the six action families DCGO's own AI ever queues:
         /// play-from-hand, digivolve, attack, activate-hand-effect,
-        /// activate-field-effect, and pass. Anything else -- DNA digivolve,
-        /// source selection, breeding-source selection, trash effects -- has no
-        /// single <c>MainPhaseAction</c> shape, so it returns null with an
-        /// error and the job aborts rather than quietly playing something else.
+        /// activate-field-effect, and pass -- plus DNA digivolve, which the AI
+        /// never queues but a scripted exam line does (it needs the step's
+        /// <c>dna_materials</c>, read back through
+        /// <see cref="LastActionStep"/>). Anything else -- source selection,
+        /// breeding-source selection, trash effects -- has no single
+        /// <c>MainPhaseAction</c> shape, so it returns null with an error and
+        /// the job aborts rather than quietly playing something else.
         ///
         /// Index spaces, all mirrored from <c>ActionEncoder</c>:
         ///   hand slot   -> <c>actor.HandCards[slot].CardIndex</c> (an
@@ -438,8 +463,90 @@ namespace Digimon.Harness
                 return new ActivatePermanentAction(slot, skillIndex);
             }
 
+            // DNA (Jogress) digivolution. ONE declaration on this side: a
+            // PlayCardAction whose JogressEvoRootsFrameIDs names both
+            // materials (CardController.PlayCardClass reads them at
+            // "#region Set target(s)" and ignores TargetFrameID while
+            // isJogress). The Rust engine instead asks for the two materials
+            // as separate SelectionKind::Material prompts after the
+            // DNA_DIGIVOLVE bit, so the exam's `dna:` verb carries them on
+            // this same row as `dna_materials` — identities, never indices,
+            // like every other payload on this wire.
+            //
+            // Until 2026-09-20 this range was refused outright, which made
+            // every [DNA Digivolve] clause structurally unmeasurable
+            // (G-TOOLING-EXAM-NO-DNA-VERB, qa/dcgo-exams/BT8/NOTES-BT8-084.md).
+            if (actionId >= Digimon.Recording.ActionSpace.DNA_DIGIVOLVE_START
+                && actionId < Digimon.Recording.ActionSpace.DNA_DIGIVOLVE_END)
+            {
+                int handSlot = actionId - Digimon.Recording.ActionSpace.DNA_DIGIVOLVE_START;
+                CardSource card = HandCardAt(actor, handSlot, ref error);
+                if (card == null) return null;
+
+                HarnessJobStep step = _lastActionStep;
+                string[] materials = step == null ? null : step.dna_materials;
+                if (materials == null || materials.Length != 2)
+                {
+                    error = "DNA digivolve names no material pair: the step must carry "
+                            + "`dna_materials` with exactly 2 top-card ids (got "
+                            + (materials == null ? 0 : materials.Length) + ")";
+                    return null;
+                }
+
+                int[] frames = new int[2];
+                bool[] taken = new bool[actor.fieldCardFrames == null ? 0 : actor.fieldCardFrames.Count];
+                for (int m = 0; m < materials.Length; m++)
+                {
+                    int frame = FindFrameByTopCardId(actor, materials[m], taken);
+                    if (frame < 0)
+                    {
+                        error = "DNA material '" + materials[m]
+                                + "' is not an unclaimed permanent on the actor's field";
+                        return null;
+                    }
+                    frames[m] = frame;
+                    taken[frame] = true;
+                }
+
+                // TargetFrameID is unused while isJogress (CardController
+                // takes its targets from the jogress frames), but pass the
+                // first material rather than a sentinel so a future reader
+                // sees a real frame.
+                return new PlayCardAction(card.CardIndex, frames[0], frames, -1, new int[0]);
+            }
+
             error = "action id " + actionId + " has no MainPhaseAction shape";
             return null;
+        }
+
+        /// <summary>
+        /// The <c>fieldCardFrames</c> index of the first permanent of
+        /// <paramref name="actor"/> whose TOP-CARD id is
+        /// <paramref name="cardId"/> and whose frame is not already
+        /// <paramref name="taken"/>. -1 when there is none.
+        /// </summary>
+        /// <remarks>
+        /// Occurrence order, exactly like <c>SelectionAnswer.MatchCardIds</c>:
+        /// two copies of the same card are interchangeable for a declaration
+        /// that names identities, and claiming one before matching the next is
+        /// what keeps `[X, X]` from resolving to the same permanent twice.
+        /// Frame ids (sparse) rather than compact field positions, because
+        /// that is what <c>PlayCardAction.JogressEvoRootsFrameIDs</c> carries.
+        /// </remarks>
+        private static int FindFrameByTopCardId(Player actor, string cardId, bool[] taken)
+        {
+            if (actor == null || actor.fieldCardFrames == null || string.IsNullOrEmpty(cardId))
+            {
+                return -1;
+            }
+            for (int i = 0; i < actor.fieldCardFrames.Count; i++)
+            {
+                if (taken != null && i < taken.Length && taken[i]) continue;
+                Permanent p = actor.fieldCardFrames[i].GetFramePermanent();
+                if (p == null || p.TopCard == null) continue;
+                if (p.TopCard.CardID == cardId) return i;
+            }
+            return -1;
         }
 
         /// <summary>
