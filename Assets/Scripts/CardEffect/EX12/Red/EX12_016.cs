@@ -39,7 +39,7 @@ namespace DCGO.CardEffects.EX12
                     return cardSource.IsDigimon
                         && cardSource.HasLevel
                         && cardSource.Level <= 4
-                        && (cardSource.ContainsCardName("Agumon")
+                        && (cardSource.HasAgumonName
                             || cardSource.ContainsCardName("Greymon")
                             || cardSource.EqualsTraits("ME")
                             || cardSource.EqualsTraits("VB"));
@@ -163,7 +163,7 @@ namespace DCGO.CardEffects.EX12
                         {
                             return cardSource.HasLevel
                                 && cardSource.Level <= 4
-                                && (cardSource.ContainsCardName("Agumon")
+                                && (cardSource.HasAgumonName
                                     || cardSource.ContainsCardName("Greymon")
                                     || cardSource.EqualsTraits("ME")
                                     || cardSource.EqualsTraits("VB"));
@@ -192,7 +192,7 @@ namespace DCGO.CardEffects.EX12
                     return cardSource.IsDigimon
                         && cardSource.HasLevel
                         && cardSource.Level <= 4
-                        && (cardSource.ContainsCardName("Agumon")
+                        && (cardSource.HasAgumonName
                             || cardSource.ContainsCardName("Greymon")
                             || cardSource.EqualsTraits("ME")
                             || cardSource.EqualsTraits("VB"));

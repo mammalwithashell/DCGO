@@ -94,7 +94,7 @@ namespace DCGO.CardEffects.EX12
                     return cardSource.IsDigimon
                         && cardSource.HasLevel
                         && cardSource.Level <= 5
-                        && (cardSource.ContainsCardName("Agumon")
+                        && (cardSource.HasAgumonName
                             || cardSource.ContainsCardName("Greymon")
                             || cardSource.EqualsTraits("ME")
                             || cardSource.EqualsTraits("VB"));
@@ -313,7 +313,7 @@ namespace DCGO.CardEffects.EX12
                             return cardSource != null
                                 && cardSource.Owner == card.Owner
                                 && cardSource.IsLevel5
-                                && (cardSource.ContainsCardName("Agumon")
+                                && (cardSource.HasAgumonName
                                     || cardSource.ContainsCardName("Greymon")
                                     || cardSource.EqualsTraits("ME")
                                     || cardSource.EqualsTraits("VB"));
@@ -324,7 +324,7 @@ namespace DCGO.CardEffects.EX12
                             return cardSource != null
                                 && cardSource.Owner == card.Owner
                                 && cardSource.IsLevel4
-                                && (cardSource.ContainsCardName("Agumon")
+                                && (cardSource.HasAgumonName
                                     || cardSource.ContainsCardName("Greymon")
                                     || cardSource.EqualsTraits("ME")
                                     || cardSource.EqualsTraits("VB"));
@@ -335,7 +335,7 @@ namespace DCGO.CardEffects.EX12
                             return cardSource != null
                                 && cardSource.Owner == card.Owner
                                 && cardSource.IsLevel3
-                                && (cardSource.ContainsCardName("Agumon")
+                                && (cardSource.HasAgumonName
                                     || cardSource.ContainsCardName("Greymon")
                                     || cardSource.EqualsTraits("ME")
                                     || cardSource.EqualsTraits("VB"));

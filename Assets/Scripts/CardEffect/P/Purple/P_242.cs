@@ -136,7 +136,7 @@ namespace DCGO.CardEffects.P
                     card.Owner.UntilCalculateFixedCostEffect.Add(GetCardEffect);
                     #endregion
 
-                    if (CardEffectCommons.HasMatchConditionOwnersHand(card, CanSelectCardCondition))
+                    if (CardEffectCommons.HasMatchConditionOwnersCardInTrash(card, CanSelectCardCondition))
                     {
                         SelectCardEffect selectCardEffect = GManager.instance.GetComponent<SelectCardEffect>();
 

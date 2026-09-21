@@ -53,134 +53,29 @@ namespace DCGO.CardEffects.EX12
 
                 bool CanSelectCardCondition(CardSource cardSource)
                 {
-                    return (cardSource.HasText("Jellymon")
-                            || cardSource.EqualsTraits("DS"))
-                        && ((cardSource.IsOption
-                                && !cardSource.CanNotPlayThisOption)
-                            || (cardSource.HasPlayCost
-                                && CardEffectCommons.CanPlayAsNewPermanent(cardSource: cardSource, payCost: true, cardEffect: activateClass, fixedCost: cardSource.GetCostItself - 2)));
+                    return cardSource.HasText("Jellymon")
+                            || cardSource.EqualsTraits("DS");
                 }
 
                 IEnumerator ActivateCoroutine(Hashtable hashtable)
                 {
-                    bool isUsed = false;
-                    CardSource selectedCard = null;
-
-                    #region Selected card in hand to play/use
-                    SelectHandEffect selectHandEffect = GManager.instance.GetComponent<SelectHandEffect>();
-
-                    selectHandEffect.SetUp(
-                        selectPlayer: card.Owner,
+                    yield return ContinuousController.instance.StartCoroutine(CardEffectCommons.PlayOrUseByEffect(
                         canTargetCondition: CanSelectCardCondition,
-                        canTargetCondition_ByPreSelecetedList: null,
-                        canEndSelectCondition: null,
-                        maxCount: 1,
-                        canNoSelect: true,
-                        canEndNotMax: false,
-                        isShowOpponent: true,
-                        selectCardCoroutine: SelectCardCoroutine,
-                        afterSelectCardCoroutine: null,
-                        mode: SelectHandEffect.Mode.Custom,
-                        cardEffect: activateClass);
+                        root: SelectCardEffect.Root.Hand,
+                        cardEffect: activateClass,
+                        payCost: true,
+                        reducedCost: 2,
+                        afterSelectCardCoroutine: AfterSelectCardCoroutine
+                        ));
 
-                    IEnumerator SelectCardCoroutine(CardSource cardSource)
+                    IEnumerator AfterSelectCardCoroutine(List<CardSource> cardSources)
                     {
-                        selectedCard = cardSource;
+                        if (cardSources.Count == 0)
+                        {
+                            activateClass.RemoveUse();
+                        }
                         yield return null;
                     }
-
-                    selectHandEffect.SetUpCustomMessage("Select 1 card to play/use.", "The opponent is selecting 1 card to play/use.");
-                    selectHandEffect.SetUpCustomMessage_ShowCard("Selected Card");
-                    yield return ContinuousController.instance.StartCoroutine(selectHandEffect.Activate());
-                    #endregion
-
-                    if (selectedCard != null)
-                    {
-                        isUsed = true;
-
-                        #region Reduce Cost
-                        IEnumerator ReduceCost(string type)
-                        {
-                            if (card.Owner.CanReduceCost(null, card))
-                            {
-                                ContinuousController.instance.PlaySE(GManager.instance.GetComponent<Effects>().BuffSE);
-                            }
-
-                            Hashtable hashtable = new Hashtable
-                            {
-                                { "CardEffect", activateClass }
-                            };
-
-                            ChangeCostClass changeCostClass = new ChangeCostClass();
-                            changeCostClass.SetUpICardEffect($"{type} cost: -2", CanUseCondition1, card);
-                            changeCostClass.SetUpChangeCostClass(changeCostFunc: ChangeCost, cardSourceCondition: CardSourceCondition, rootCondition: RootCondition, isUpDown: isUpDown, isCheckAvailability: () => false, isChangePayingCost: () => true);
-                            card.Owner.UntilCalculateFixedCostEffect.Add(_ => changeCostClass);
-                            yield return ContinuousController.instance.StartCoroutine(CardEffectCommons.ShowReducedCost(hashtable));
-
-                            bool CanUseCondition1(Hashtable hashtable)
-                            {
-                                return true;
-                            }
-
-                            int ChangeCost(CardSource cardSource, int cost, SelectCardEffect.Root root, List<Permanent> targetPermanents)
-                            {
-                                if (CardSourceCondition(cardSource) &&
-                                    RootCondition(root) &&
-                                    PermanentsCondition(targetPermanents))
-                                {
-                                    cost -= 2;
-                                }
-
-                                return cost;
-                            }
-
-                            bool PermanentsCondition(List<Permanent> targetPermanents)
-                            {
-                                return targetPermanents == null || targetPermanents.Count(targetPermanent => targetPermanent != null) == 0;
-                            }
-
-                            bool CardSourceCondition(CardSource cardSource)
-                            {
-                                return cardSource != null
-                                    && cardSource.Owner == card.Owner;
-                            }
-
-                            bool RootCondition(SelectCardEffect.Root root)
-                            {
-                                return true;
-                            }
-
-                            bool isUpDown()
-                            {
-                                return true;
-                            }
-                        }
-                        #endregion
-
-                        if (selectedCard.IsOption)
-                        {
-                            yield return ContinuousController.instance.StartCoroutine(ReduceCost("Use"));
-                            yield return ContinuousController.instance.StartCoroutine(CardEffectCommons.PlayOptionCards(
-                                cardSources: new List<CardSource>() { selectedCard },
-                                activateClass: activateClass,
-                                payCost: true,
-                                root: SelectCardEffect.Root.Hand));
-
-                        }
-                        else
-                        {
-                            yield return ContinuousController.instance.StartCoroutine(ReduceCost("Play"));
-                            yield return ContinuousController.instance.StartCoroutine(CardEffectCommons.PlayPermanentCards(
-                                cardSources: new List<CardSource>() { selectedCard },
-                                activateClass: activateClass,
-                                payCost: true,
-                                isTapped: false,
-                                root: SelectCardEffect.Root.Hand,
-                                activateETB: true));
-                        }
-                    }
-
-                    if (!isUsed) activateClass.RemoveUse();
                 }
             }
             #endregion

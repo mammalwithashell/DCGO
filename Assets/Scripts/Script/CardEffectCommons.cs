@@ -6,6 +6,7 @@ using UnityEngine;
 
 public partial class CardEffectCommons
 {
+    private static WaitForSeconds _waitForSeconds0_5 = new WaitForSeconds(0.5f);
     #region Digivolution Requirements
 
     public enum IgnoreRequirement
@@ -216,6 +217,42 @@ public partial class CardEffectCommons
             isOwnerPermanent: true,
             isTapped: false
         ));
+    }
+
+    #endregion
+
+    #region Play 1 [Amon of Crimson Flame] & [Umon of Blue Thunder] Token
+
+    public static IEnumerator PlayAmonAndUmonToken(ICardEffect activateClass)
+    {
+        CardSource card = activateClass.EffectSourceCard;
+        List<CardSource> playCards = new List<CardSource>();
+
+        CardSource tokenCard1 = CardObjectController.CreateCardSource(
+            card.Owner.PlayerID,
+            ContinuousController.instance.AmonToken,
+            true);
+
+        playCards.Add(tokenCard1);
+
+        CardSource tokenCard2 = CardObjectController.CreateCardSource(
+            card.Owner.PlayerID,
+            ContinuousController.instance.UmonToken,
+            true);
+
+        playCards.Add(tokenCard2);
+
+        if (CanPlayAsNewPermanent(cardSource: playCards[0], payCost: false, cardEffect: activateClass))
+        {
+            yield return ContinuousController.instance.StartCoroutine(new PlayCardClass(
+                cardSources: playCards,
+                hashtable: CardEffectHashtable(activateClass),
+                payCost: false,
+                targetPermanent: null,
+                isTapped: false,
+                root: SelectCardEffect.Root.None,
+                activateETB: true).PlayCard());
+        }
     }
 
     #endregion
@@ -450,7 +487,7 @@ public partial class CardEffectCommons
 
     public static IEnumerator AddThisCardToHand(CardSource card1, ICardEffect activateClass)
     {
-        yield return new WaitForSeconds(0.5f);
+        yield return _waitForSeconds0_5;
 
         yield return ContinuousController.instance.StartCoroutine(card1.Owner.brainStormObject.CloseBrainstrorm(card1));
 

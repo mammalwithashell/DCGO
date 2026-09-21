@@ -98,15 +98,15 @@ namespace DCGO.CardEffects.BT26
 
                 string EffectDescription()
                 {
-                    return "All Turns] [Once Per Turn] When security stacks are removed from, 1 of your opponent's Digimon gets -15000 DP until their turn ends.";
+                    return "[All Turns] [Once Per Turn] When security stacks are removed from, 1 of your opponent's Digimon gets -15000 DP until their turn ends.";
                 }
                 
                 bool CanUseCondition(Hashtable hashtable)
                 {
                     return CardEffectCommons.IsExistOnBattleAreaTrigger(card, activateClass)
-                        && CardEffectCommons.CanTriggerWhenLoseSecurity(hashtable, (player) => player == card.Owner);
+                        && CardEffectCommons.CanTriggerWhenLoseSecurity(hashtable, player => player == card.Owner || player == card.Owner.Enemy);
                 }
-                
+
                 bool CanActivateCondition(Hashtable hashtable)
                 {
                     return CardEffectCommons.IsExistOnBattleAreaActivate(card, activateClass);

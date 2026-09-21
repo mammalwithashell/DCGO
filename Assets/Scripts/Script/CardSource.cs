@@ -710,19 +710,25 @@ public class CardSource : MonoBehaviour
             {
                 if (Owner.CanReduceCost(null, this))
                 {
-                    //AI
-                    if (!(!Owner.isYou && GManager.instance.IsAI))
+                    SelectAssemblyClass selectAssemblyClass = GManager.instance.GetComponent<SelectAssemblyClass>();
+
+                    if (checkAvailability)
                     {
-                        if (checkAvailability)
+                        //AI
+                        if (!(!Owner.isYou && GManager.instance.IsAI))
                         {
-                            return 0;
+                            // Assembly's discount stacks additively with whatever cost was already computed
+                            // (e.g. a foreign ability's own reduced/fixed cost) - it doesn't replace it. Only
+                            // apply it here when the player genuinely has valid material available right now;
+                            // otherwise leave Cost untouched so the real (possibly foreign-reduced) cost is used.
+                            if (selectAssemblyClass != null && selectAssemblyClass.CanFulfillConditions(this))
+                            {
+                                Cost -= assemblyCondition.reduceCost;
+                            }
                         }
                     }
-
-                    if (!checkAvailability)
+                    else
                     {
-                        SelectAssemblyClass selectAssemblyClass = GManager.instance.GetComponent<SelectAssemblyClass>();
-
                         if (selectAssemblyClass != null)
                         {
                             if (selectAssemblyClass.playCard == this)
@@ -1648,6 +1654,24 @@ public class CardSource : MonoBehaviour
 
     #endregion
 
+    #region whether this card has at least 1 card name that contains "Agumon"
+
+    public bool HasAgumonName
+    {
+        get
+        {
+            if (CardNames.Some((cardName) => (cardName.Contains("Agumon") || cardName.Contains("agumon"))
+            && cardName != "Pagumon"))
+            {
+                return true;
+            }
+
+            return false;
+        }
+    }
+
+    #endregion
+
     #region whether this card has at least 1 card name that contains "Dramon"
 
     public bool HasDramonName
@@ -2134,6 +2158,22 @@ public class CardSource : MonoBehaviour
             DataBase.ReplaceToASCII(_cEntity_Base.SecurityEffectDiscription_ENG),
             DataBase.ReplaceToASCII(_cEntity_Base.OptionEffect),
         };
+
+        if (HasAssembly)
+        {
+            foreach(AssemblyConditionElement element in assemblyCondition.elements)
+            {
+                checkStrings.Add(DataBase.ReplaceToASCII(element.selectMessage));
+            }
+        }
+
+        if (HasDigiXros)
+        {
+            foreach(DigiXrosConditionElement element in digiXrosCondition.elements)
+            {
+                checkStrings.Add(DataBase.ReplaceToASCII(element.selectMessage));
+            }
+        }
 
         foreach (string attribute in _cEntity_Base.Attribute_ENG)
             checkStrings.Add(DataBase.ReplaceToASCII(attribute));
@@ -3988,6 +4028,18 @@ public class CardSource : MonoBehaviour
 
     #endregion
 
+    #region whether this card has "God" Appmon Grade trait
+
+    public bool HasGodAppTraits
+    {
+        get
+        {
+            return EqualsTraits("God");
+        }
+    }
+
+    #endregion
+
     #region whether this card has "Holy Beast" trait
 
     public bool HasHolyBeastTraits
@@ -4223,6 +4275,18 @@ public class CardSource : MonoBehaviour
         get
         {
             return EqualsTraits("VB");
+        }
+    }
+
+    #endregion
+
+    #region whether this card has DATA SQUAD trait
+
+    public bool HasDataSquadTraits
+    {
+        get
+        {
+            return EqualsTraits("DATA SQUAD");
         }
     }
 

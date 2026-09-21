@@ -70,13 +70,14 @@ namespace DCGO.CardEffects.EX12
             if (timing == EffectTiming.OptionSkill)
             {
                 ActivateClass activateClass = new ActivateClass();
-                activateClass.SetUpICardEffect("Replace your bottom sec with this face-up card, play a [Shambala] Digimon for -3", CanUseCondition, card);
+                activateClass.SetUpICardEffect("Replace your bottom sec with this face-up card, play a [Shambala] for -3", CanUseCondition, card);
                 activateClass.SetUpActivateClass(null, ActivateCoroutine, -1, false, EffectDescription());
+                activateClass.SetIsOptionEffect(true);
                 cardEffects.Add(activateClass);
 
                 string EffectDescription()
                 {
-                    return "[Main] Add your bottom security card to the hand and place this card face up as the bottom security card. Then, you may play 1 [Shambala] trait Digimon card from your hand with the play cost reduced by 3.";
+                    return "[Main] Add your bottom security card to the hand and place this card face up as the bottom security card. Then, you may play 1 [Shambala] trait card from your hand with the play cost reduced by 3.";
                 }
 
                 bool CanUseCondition(Hashtable hashtable)
@@ -86,8 +87,7 @@ namespace DCGO.CardEffects.EX12
 
                 bool CanSelectCardCondition(CardSource cardSource)
                 {
-                    return cardSource.IsDigimon
-                        && cardSource.EqualsTraits("Shambala")
+                    return cardSource.EqualsTraits("Shambala")
                         && CardEffectCommons.CanPlayAsNewPermanent(cardSource, true, activateClass, fixedCost: cardSource.GetCostItself - 3);
                 }
 
@@ -113,13 +113,13 @@ namespace DCGO.CardEffects.EX12
             if (timing == EffectTiming.SecuritySkill)
             {
                 ActivateClass activateClass = new ActivateClass();
-                activateClass.SetUpICardEffect($"Play 1 play cost 5 or lower [Shambala] Digimon card from hand/trash", CanUseCondition, card);
+                activateClass.SetUpICardEffect($"Play 1 play cost 5 or lower [Shambala] card from hand/trash", CanUseCondition, card);
                 activateClass.SetUpActivateClass(null, ActivateCoroutine, -1, false, EffectDescription());
                 activateClass.SetIsSecurityEffect(true);
                 cardEffects.Add(activateClass);
 
                 string EffectDescription()
-                 => "[Security] You may play 1 play cost 5 or lower [Shambala] trait Digimon card from your hand or trash without paying the cost.";
+                 => "[Security] You may play 1 play cost 5 or lower [Shambala] trait card from your hand or trash without paying the cost.";
 
                 bool CanUseCondition(Hashtable hashtable)
                 {
@@ -128,8 +128,7 @@ namespace DCGO.CardEffects.EX12
 
                 bool CanPlayCondition(CardSource cardSource)
                 {
-                    return cardSource.IsDigimon
-                        && cardSource.HasPlayCost
+                    return cardSource.HasPlayCost
                         && cardSource.GetCostItself <= 5
                         && cardSource.EqualsTraits("Shambala")
                         && CardEffectCommons.CanPlayAsNewPermanent(cardSource: cardSource, payCost: false, cardEffect: activateClass);

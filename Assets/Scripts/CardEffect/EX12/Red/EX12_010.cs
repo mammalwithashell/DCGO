@@ -15,7 +15,7 @@ namespace DCGO.CardEffects.EX12
             {
                 bool PermanentCondition(Permanent targetPermanent)
                 {
-                    return targetPermanent.TopCard.ContainsCardName("Agumon")
+                    return targetPermanent.TopCard.HasAgumonName
                         || targetPermanent.TopCard.EqualsTraits("ME")
                         || targetPermanent.TopCard.EqualsTraits("VB");
                 }

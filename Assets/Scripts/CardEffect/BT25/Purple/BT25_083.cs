@@ -25,7 +25,7 @@ namespace DCGO.CardEffects.BT25
             #endregion
 
             #region OP/WD Shared
-            string SharedEffectName = "By place 1 [Three Musketeers] trait card from hand or trash as any digimon bottom digivolution card, <Draw 1>";
+            string SharedEffectName = "By placing 1 [Three Musketeers] trait card from hand or trash as any digimon bottom digivolution card, <Draw 1>";
 
             string SharedEffectDescription(string tag) => $"[{tag}] By placing 1 [Three Musketeers] trait card from your hand or trash as any of your Digimon's bottom digivolution cards, <Draw 1>";
             bool AdditionalActivateCondition(Hashtable hashtable, ActivateClass activateClass) => CardEffectCommons.HasMatchConditionOwnersHand(card, SharedCanSelectCardCondition) || CardEffectCommons.HasMatchConditionOwnersCardInTrash(card, SharedCanSelectCardCondition);
@@ -189,7 +189,8 @@ namespace DCGO.CardEffects.BT25
                 bool hasUsed = false;
                 bool CanSelect3MOptionCard(CardSource cardSource) => cardSource.IsOption
                     && cardSource.HasThreeMusketeersTraits
-                    && cardSource.PayingCost(SelectCardEffect.Root.Trash, null, checkAvailability: false) <= cardSource.Owner.MaxMemoryCost;
+                    && cardSource.GetCostItself - 3 <= cardSource.Owner.MaxMemoryCost
+                    && !cardSource.CanNotPlayThisOption;
 
                 if (CardEffectCommons.HasMatchConditionOwnersPermanent(card, CanSelectDigimonCondition))
                 {
@@ -294,6 +295,7 @@ namespace DCGO.CardEffects.BT25
 
                                 selectCardEffect1.SetUpCustomMessage("Select 1 [Three Musketeers] option to use.", "The opponent is selecting 1 [Three Musketeers] option to use.");
                                 selectCardEffect1.SetUpCustomMessage_ShowCard("Selected Card");
+                                selectCardEffect1.SetHighlightCard(selectedCard, "Trashed Card");
 
                                 yield return ContinuousController.instance.StartCoroutine(selectCardEffect1.Activate());
 

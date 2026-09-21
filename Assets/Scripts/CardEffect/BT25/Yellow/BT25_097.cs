@@ -109,7 +109,7 @@ namespace DCGO.CardEffects.BT25
                             return true;
                         }
 
-                        cardEffects.Add(CardEffectFactory.ScapegoatSelfEffect(false, cardSource, Condition, "Scapegoat", "<Scapegoat>", addSkillClass));
+                        cardEffects.Add(CardEffectFactory.ScapegoatSelfEffect(false, cardSource, Condition, "Scapegoat", addSkillClass));
                     }
 
                     return cardEffects;
@@ -127,6 +127,7 @@ namespace DCGO.CardEffects.BT25
                 ActivateClass activateClass = new ActivateClass();
                 activateClass.SetUpICardEffect("Replace your bottom sec with this face-up card, play a [TS] Digimon for -3", CanUseCondition, card);
                 activateClass.SetUpActivateClass(null, ActivateCoroutine, -1, false, EffectDescription());
+                activateClass.SetIsOptionEffect(true);
                 cardEffects.Add(activateClass);
 
                 string EffectDescription()
