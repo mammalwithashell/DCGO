@@ -1101,7 +1101,7 @@ public class SelectPermanentEffect : MonoBehaviourPunCallbacks
                 __candidateIds = new System.Collections.Generic.List<string>();
                 foreach (Permanent __perm in __perms)
                 {
-                    __candidateIds.Add(__perm?.TopCard?.CardID ?? "");
+                    __candidateIds.Add(Digimon.Harness.CardIdentity.Of(__perm?.TopCard));
                 }
             }
             Digimon.Harness.HarnessJobStep __step;

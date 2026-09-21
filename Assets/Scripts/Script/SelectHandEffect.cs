@@ -786,7 +786,7 @@ public class SelectHandEffect : MonoBehaviourPunCallbacks
         List<CardSource> cards = ScriptedCandidateCards();
         if (cards == null) return null;
         var ids = new List<string>();
-        foreach (CardSource cardSource in cards) ids.Add(cardSource?.CardID ?? "");
+        foreach (CardSource cardSource in cards) ids.Add(Digimon.Harness.CardIdentity.Of(cardSource));
         return ids;
     }
 
@@ -899,7 +899,7 @@ public class SelectHandEffect : MonoBehaviourPunCallbacks
                     var __ids = new System.Collections.Generic.List<string>();
                     foreach (int __ci in CardIDs)
                         if (__ci >= 0 && __ci < __gc.ActiveCardList.Count)
-                            __ids.Add(__gc.ActiveCardList[__ci]?.CardID ?? "");
+                            __ids.Add(Digimon.Harness.CardIdentity.Of(__gc.ActiveCardList[__ci]));
                     __rec.LogSelectionRow(playerID, "SelectHandEffect", __gc.TurnPhase.ToString(), cardIds: __ids,
                         mechanic: __mechanic, zone: "Hand");
                 }

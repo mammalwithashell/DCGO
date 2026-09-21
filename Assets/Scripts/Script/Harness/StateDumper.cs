@@ -254,7 +254,37 @@ namespace Digimon.Harness
         private static string TopCardIdOf(Permanent perm)
         {
             if (perm == null) return "";
-            return perm.TopCard == null ? "" : perm.TopCard.CardID;
+            return CardIdOrTokenId(perm.TopCard);
+        }
+
+        /// <summary>
+        /// A card's <c>CardID</c>, or a synthetic <c>TOKEN_&lt;NAME&gt;</c> id when
+        /// the card is a token.
+        /// </summary>
+        /// <remarks>
+        /// A token has no printed card number, so <c>CardSource.CardID</c> is the
+        /// empty string for one. Emitting that empty string made EVERY exam
+        /// scenario whose end state holds a token report a spurious
+        /// <c>card_id</c> divergence: the Rust projection names tokens
+        /// <c>TOKEN_PETRIFICATION</c> / <c>TOKEN_FAMILIAR</c>
+        /// (<c>code/digimon-engine/src/cards/tokens/mod.rs</c>) while this side
+        /// said "". Every other field (dp, suspended, sources) already agreed,
+        /// so the mismatch was pure representation -- exactly what this
+        /// projection exists to normalize.
+        ///
+        /// Tokens DO carry identity here: <c>CEntity_Base.CardName_ENG</c> is set
+        /// at construction in <c>ContinuousController</c> ("Petrification",
+        /// "Paishu", "Hinukamuy"), so the id is derived rather than invented,
+        /// and a NEW token gets a correct id with no change to this method.
+        /// Falls back to "" for a token with no name rather than inventing
+        /// <c>TOKEN_</c>, so an unnamed token still reads as unidentified
+        /// instead of colliding with every other unnamed token.
+        /// </remarks>
+        private static string CardIdOrTokenId(CardSource card)
+        {
+            // Single definition, shared with the selection-candidate and
+            // action-encoder paths -- see Digimon.Harness.CardIdentity.
+            return CardIdentity.Of(card);
         }
 
         /// <summary>
@@ -294,7 +324,9 @@ namespace Digimon.Harness
 
         private static string CardIdOf(CardSource card)
         {
-            return card == null ? "" : card.CardID;
+            // Same token handling as the top card: a token can sit in a
+            // digivolution stack (`sources`) too.
+            return CardIdOrTokenId(card);
         }
 
         /// <summary>

@@ -583,7 +583,7 @@ namespace Digimon.Recording
             // indices aligned by luck rather than by construction.
             foreach (var perm in player.GetBattleAreaPermanents())
             {
-                ids.Add(perm?.TopCard?.CardID ?? "");
+                ids.Add(Digimon.Harness.CardIdentity.Of(perm?.TopCard));
             }
             return ids;
         }
