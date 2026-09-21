@@ -61,7 +61,30 @@ namespace Digimon.Harness.EditorTools
                     options = BuildOptions.None,
                 };
 
-                BuildReport report = BuildPipeline.BuildPlayer(options);
+                // The oracle is ALWAYS a Mono build, whatever the checked-in
+                // ProjectSettings say. Upstream ships IL2CPP (Standalone: 1) for
+                // its release builds; every oracle this harness has ever
+                // validated against (scripted-v1..v16) was Mono, and the host
+                // CLI stamps a build's identity by hashing DCGO_Data/Managed,
+                // which an IL2CPP player does not have. Those builds were only
+                // Mono by ACCIDENT: they read an uncommitted local
+                // ProjectSettings.asset whose scriptingBackend was unset. Pinning
+                // it here makes the oracle reproducible from committed code. The
+                // previous backend is restored afterwards so the build never
+                // rewrites the project's own settings.
+                const BuildTargetGroup group = BuildTargetGroup.Standalone;
+                ScriptingImplementation previousBackend = PlayerSettings.GetScriptingBackend(group);
+                PlayerSettings.SetScriptingBackend(group, ScriptingImplementation.Mono2x);
+
+                BuildReport report;
+                try
+                {
+                    report = BuildPipeline.BuildPlayer(options);
+                }
+                finally
+                {
+                    PlayerSettings.SetScriptingBackend(group, previousBackend);
+                }
                 BuildSummary summary = report.summary;
 
                 if (summary.result == BuildResult.Succeeded)
