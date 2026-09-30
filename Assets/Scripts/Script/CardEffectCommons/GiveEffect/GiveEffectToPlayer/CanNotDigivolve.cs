@@ -53,6 +53,8 @@ public partial class CardEffectCommons
             card: card,
             condition: CanUseCondition,
             effectName: effectName);
+        
+        canNotDigivolveClass.SetIsOptionEffect(activateClass.IsOptionEffect);
 
         AddEffectToPlayer(effectDuration: effectDuration, card: card, cardEffect: canNotDigivolveClass, timing: EffectTiming.None);
 

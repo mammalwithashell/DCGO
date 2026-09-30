@@ -98,35 +98,10 @@ namespace DCGO.CardEffects.EX7
                         {
                             Permanent permanentOfThisCard = card.PermanentOfThisCard();
 
-                            CanNotAffectedClass canNotAffectedClass = new CanNotAffectedClass();
-                            canNotAffectedClass.SetUpICardEffect("Isn't affected by opponent's Digimon's effects",
-                                CanUseConditionImmunity, card);
-                            canNotAffectedClass.SetUpCanNotAffectedClass(CardCondition: CardCondition,
-                                SkillCondition: SkillCondition);
-                            permanentOfThisCard.UntilOpponentTurnEndEffects.Add(GetCardEffect);
-
-                            bool CanUseConditionImmunity(Hashtable hashtableImmunity)
-                            {
-                                return CardEffectCommons.IsPermanentExistsOnOwnerBattleAreaDigimon(permanentOfThisCard, card);
-                            }
-
-                            bool CardCondition(CardSource cardSource)
-                            {
-                                return CardEffectCommons.IsPermanentExistsOnBattleArea(permanentOfThisCard) &&
-                                       cardSource == permanentOfThisCard.TopCard;
-                            }
-
-                            bool SkillCondition(ICardEffect cardEffect)
-                            {
-                                return CardEffectCommons.IsOpponentEffect(cardEffect, card)
-                                    && ((!cardEffect.EffectSourceCard.IsDualCard && cardEffect.EffectSourceCard.IsDigimon)
-                                        || (cardEffect.EffectSourceCard.IsDualCard && !cardEffect.IsOptionEffect));
-                            }
-
-                            ICardEffect GetCardEffect(EffectTiming timingImmunity)
-                            {
-                                return timingImmunity == EffectTiming.None ? canNotAffectedClass : null;
-                            }
+                            #region Give Digimon Effect Immunity
+                            selectedPermanent.UntilOpponentTurnEndEffects.Add((_timing) => PermanentEffectFactory.DigimonEffectImmunity(selectedPermanent));
+                            yield return ContinuousController.instance.StartCoroutine(GManager.instance.GetComponent<Effects>().CreateBuffEffect(selectedPermanent));
+                            #endregion
                         }
                     }
                 }

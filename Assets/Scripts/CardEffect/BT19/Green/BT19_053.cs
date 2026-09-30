@@ -193,7 +193,8 @@ namespace DCGO.CardEffects.BT19
                 bool HasRoyalBaseDigimon(Permanent permanent)
                 {
                     return CardEffectCommons.IsPermanentExistsOnOwnerBattleAreaDigimon(permanent, card)
-                        && permanent.TopCard.EqualsTraits("Royal Base");
+                        && permanent.TopCard.EqualsTraits("Royal Base")
+                        && permanent.willBeRemoveField;
                 }
 
                 bool CanUseCondition(Hashtable hashtable)
@@ -208,7 +209,8 @@ namespace DCGO.CardEffects.BT19
                     removedPermanents = CardEffectCommons.GetPermanentsFromHashtable(hashtable).Filter(HasRoyalBaseDigimon);
 
                     return CardEffectCommons.IsExistOnBattleAreaDigimonActivate(card, activateClass)
-                        && card.Owner.CanAddSecurity(activateClass);
+                        && card.Owner.CanAddSecurity(activateClass)
+                        && removedPermanents.Some(permanent => CardEffectCommons.IsPermanentExistsOnBattleAreaDigimon(permanent));
                 }
 
                 IEnumerator ActivateCoroutine(Hashtable hashtable)

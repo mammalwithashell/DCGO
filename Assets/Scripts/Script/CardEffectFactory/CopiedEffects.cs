@@ -4,11 +4,16 @@ using System.Collections.Generic;
 
 public partial class CardEffectFactory
 {
+    #region Lock for Copy Effects to prevent stack overflows
+    public static bool CopyEffectLock { get; set; } = false;
+    #endregion
+
     /// <summary>
-    /// Creates an AddSkillClass static effect that dynamically copies non-inherited effects 
-    /// from digivolution cards under this Permanent.
+    /// Copies every effect from the digivolution cards to the effects returned for the card with the copy effect
     /// </summary>
-    public static AddSkillClass CopyDigivolutionCardEffects(
+    public static void CopyDigivolutionCardEffects(
+        ref List<ICardEffect> cardEffects, 
+        EffectTiming timing,
         CardSource card,
         bool isInheritedEffect = false,
         bool isLinkedEffect = false,
@@ -21,204 +26,158 @@ public partial class CardEffectFactory
         bool isSuccession = false
         )
     {
+        Permanent thisPermanent = card.PermanentOfThisCard();
 
-        bool DefaultCanUseCondition(Hashtable hashtable)
+        if (thisPermanent == null) return;
+
+        CardSource topCard = thisPermanent.TopCard;
+
+        bool isTopCard = card == topCard;
+
+        if (isTopCard == (isInheritedEffect || isLinkedEffect)) return;//If it is an inherited or Link effect, should not apply if it is the top card or vice versa
+
+        if (targetSources == null)
         {
-            return CardEffectCommons.IsExistOnBattleArea(card);
+            if (thisPermanent == null || thisPermanent.DigivolutionCards == null)
+                return;
+            targetSources = cardSources => cardSources;
         }
 
-        bool DefaultPermanentCondition(Permanent permanent)
-        {
-            return permanent != null && permanent == card.PermanentOfThisCard();
-        }
-
-        bool DefaultCardSourceCondition(CardSource cardSource)
-        {
-            if (cardSource == null) return false;
-
-            Permanent permanent = cardSource.PermanentOfThisCard();
-            if (permanent == null) return false;
-
-            if (!permanentCondition(permanent)) return false;
-
-            // A non-inherited/non-linked copy only applies while card is still the actual
-            // active top card of its permanent. An inherited/linked copy is specifically meant
-            // to keep applying once card is buried/attached -- requiring cardSource ==
-            // permanent.TopCard here would make that impossible, since a buried/linked card is
-            // by definition never the top card.
-            return isInheritedEffect || isLinkedEffect || cardSource == permanent.TopCard;
-        }
+        if (CopyEffectLock) return; //No Copying if checked as a result of another copy effect
+        
+        CopyEffectLock = true; //lock further copy effects
 
         List<CardSource> validSources(List<CardSource> availableSources) => availableSources.Filter(
             cardSource => cardCondition == null || cardCondition(cardSource)
         );
 
-        canUseCondition ??= DefaultCanUseCondition;
-        permanentCondition ??= DefaultPermanentCondition;
-        cardSourceCondition ??= DefaultCardSourceCondition;
-
-        AddSkillClass addSkillClass = new AddSkillClass();
-        addSkillClass.SetUpICardEffect(isSuccession ? "Succession" : "Copy Digivolution Card Effects", canUseCondition, card);
-        addSkillClass.SetIsInheritedEffect(isInheritedEffect);
-        addSkillClass.SetIsLinkedEffect(isLinkedEffect);
-
-        List<ICardEffect> GetEffects(CardSource sourceCard, List<ICardEffect> getCardEffects, EffectTiming _timing)
+        foreach (CardSource cardSource in validSources(targetSources(thisPermanent.DigivolutionCards)))
         {
-            if (getCardEffects == null)
-                getCardEffects = new List<ICardEffect>();
+            List<ICardEffect> toCopyEffects = cardSource.cEntity_EffectController.GetCardEffects_ExceptAddedEffects(timing, cardSource);
 
-            if (sourceCard == null)
-                return getCardEffects;
-
-            if (cardSourceCondition != null && !cardSourceCondition(sourceCard))
-                return getCardEffects;
-
-            Permanent thisPermanent = sourceCard.PermanentOfThisCard();
-
-            if (targetSources == null)
-            {
-                if (thisPermanent == null || thisPermanent.DigivolutionCards == null)
-                    return getCardEffects;
-                targetSources = cardSources => cardSources;
-            } 
-
-            foreach (CardSource cardSource in validSources(targetSources(sourceCard.PermanentOfThisCard().DigivolutionCards)))
-            {
-                List<ICardEffect> toCopyEffects = cardSource.cEntity_EffectController.GetCardEffects_ExceptAddedEffects(_timing, sourceCard);
-
-                toCopyEffects.ForEach(eff =>
-                    {
-                        eff.SetOriginalEffectSourceCard(cardSource);
-                    }
-                );
-
-                toCopyEffects = toCopyEffects.Filter(
-                    cardEffect => effectCondition == null || effectCondition(cardEffect)
-                );
-                
-                foreach (ICardEffect cardEffect in toCopyEffects)
+            toCopyEffects.ForEach(eff =>
                 {
-                    if (cardEffect.IsInheritedEffect || cardEffect.IsLinkedEffect)
-                    {
-                        continue;
-                    }
-
-                    if (cardEffect is ActivateClass activateClass)
-                    {
-                        // Build a brand-new ActivateClass rather than mutating/reusing the source
-                        // card's own instance. The source card's copy needs its own independent
-                        // EffectSourceCard/HashString so per-turn-use tracking (ICardEffect.IsSameEffect,
-                        // which short-circuits on reference equality) doesn't treat "the original card
-                        // already used this ability this turn" as also covering "the Digimon that just
-                        // gained this ability via Succession/copy already used it" -- per game rules,
-                        // gaining another card's effects this way grants an independently-tracked copy,
-                        // not a shared use-count with the original (real bug: a [Once Per Turn] When
-                        // Digivolving effect used earlier the same turn on the source card silently
-                        // couldn't trigger again when copied onto the new top card via Succession, even
-                        // though it's a fresh instance from the new card's perspective).
-
-                        List<CardSource> ValidCardSources = null;
-
-                        bool ValidCardSourceAtTrigger()
-                        {
-                            ValidCardSources = validSources(targetSources(sourceCard.PermanentOfThisCard().DigivolutionCards));
-                            return ValidCardSources.Contains(cardSource);
-                        }
-
-                        bool ValidCardSourceAtActivate()
-                        {
-                            Permanent thisPermanent = sourceCard.PermanentOfThisCard();
-                            if (thisPermanent != null)
-                            {
-                                ValidCardSources = validSources(targetSources(sourceCard.PermanentOfThisCard().DigivolutionCards));
-                            }
-                            return ValidCardSources.Contains(cardSource);
-                        }
-
-                        var originalUseCondition = activateClass.CanUseCondition;
-                        var originalActivateCondition = activateClass.CanActivateCondition;
-
-                        ActivateClass copiedActivateClass = new ActivateClass();
-
-                        copiedActivateClass.SetUpICardEffect(
-                            activateClass.EffectName,
-                            hashtable => ValidCardSourceAtTrigger()
-                                && (originalUseCondition is null || originalUseCondition(hashtable)),
-                            card);
-
-                        // activateClass's own coroutine body may self-reference activateClass to
-                        // adjust its own OPT usage mid-effect (e.g. "if (!isUsed) activateClass.
-                        // RemoveUse();" -- real precedent: BT26_016 Chronomon: Holy Mode). Since
-                        // that closure still targets activateClass (the source), redirect
-                        // RemoveUse()/AddUse() to affect copiedActivateClass instead for the
-                        // duration of this one call, so the source card's own OPT tracking isn't
-                        // touched by a copy's activation. Push/pop (not set/clear) and a finally
-                        // block: activateClass may already be mid-activation for a different copy
-                        // (e.g. awaiting player input) when this one starts, and the underlying
-                        // coroutine could throw or be stopped externally -- both must not leave a
-                        // stale redirect in place for the source's own later activations.
-                        IEnumerator ActivateWithRedirectedUseTracking(Hashtable hashtable)
-                        {
-                            activateClass.SetIsDigimonEffect(true);//Copy effects were for some reason refusing to act as Digimon effects. Explicitly setting here to bypass this being unset
-
-                            activateClass.PushUseTrackingRedirectTarget(copiedActivateClass);
-                            try
-                            {
-                                yield return ContinuousController.instance.StartCoroutine(activateClass.Activate(hashtable));
-                            }
-                            finally
-                            {
-                                activateClass.PopUseTrackingRedirectTarget();
-                            }
-                        }
-
-                        copiedActivateClass.SetUpActivateClass(
-                            hashtable => ValidCardSourceAtActivate()
-                                && (originalActivateCondition is null || originalActivateCondition(hashtable)),
-                            ActivateWithRedirectedUseTracking,
-                            activateClass.MaxCountPerTurn,
-                            activateClass.IsOptional,
-                            activateClass.EffectDescription);
-
-                        copiedActivateClass.SetOriginalEffectSourceCard(cardSource);
-                        copiedActivateClass.SetHashString(GenerateHashString(card, cardSource, activateClass.HashString, isInheritedEffect, isLinkedEffect));
-                        copiedActivateClass.SetIsInheritedEffect(activateClass.IsInheritedEffect);
-                        copiedActivateClass.SetIsLinkedEffect(activateClass.IsLinkedEffect);
-
-
-                        getCardEffects.Add(copiedActivateClass);
-
-                        getCardEffects.Add(PermanentEffectFactory.AddDetailClass(
-                            thisPermanent,
-                            copiedActivateClass.EffectDescription,
-                            true,
-                            copiedActivateClass));
-                    }
-                    else if (!isSuccession || cardEffect.EffectName != "Succession") // Succession can never copy another succession skill
-                    {
-                        getCardEffects.Add(cardEffect);
-                        getCardEffects.Add(PermanentEffectFactory.AddDetailClass(
-                            thisPermanent,
-                            cardEffect.EffectDescription,
-                            false,
-                            cardEffect));
-                    }
+                    eff.SetOriginalEffectSourceCard(cardSource);
                 }
-                // If succession, break loop after first valid card to only copy topmost.
-                // break instead of return in case we ever need to perform more actions before returning
-                if (isSuccession) break; 
-            }
+            );
 
-            return getCardEffects;
+            toCopyEffects = toCopyEffects.Filter(
+                cardEffect => effectCondition == null || effectCondition(cardEffect)
+            );
+            
+            foreach (ICardEffect cardEffect in toCopyEffects)
+            {
+                if (cardEffect.IsInheritedEffect || cardEffect.IsLinkedEffect)
+                {
+                    continue;
+                }
+
+                if (cardEffect is ActivateClass activateClass)
+                {
+                    // Build a brand-new ActivateClass rather than mutating/reusing the source
+                    // card's own instance. The source card's copy needs its own independent
+                    // EffectSourceCard/HashString so per-turn-use tracking (ICardEffect.IsSameEffect,
+                    // which short-circuits on reference equality) doesn't treat "the original card
+                    // already used this ability this turn" as also covering "the Digimon that just
+                    // gained this ability via Succession/copy already used it" -- per game rules,
+                    // gaining another card's effects this way grants an independently-tracked copy,
+                    // not a shared use-count with the original (real bug: a [Once Per Turn] When
+                    // Digivolving effect used earlier the same turn on the source card silently
+                    // couldn't trigger again when copied onto the new top card via Succession, even
+                    // though it's a fresh instance from the new card's perspective).
+
+                    List<CardSource> ValidCardSources = null;
+
+                    bool ValidCardSourceAtTrigger()
+                    {
+                        ValidCardSources = validSources(targetSources(thisPermanent.DigivolutionCards));
+                        return ValidCardSources.Contains(cardSource);
+                    }
+
+                    bool ValidCardSourceAtActivate()
+                    {
+                        if (thisPermanent != null)
+                        {
+                            ValidCardSources = validSources(targetSources(thisPermanent.DigivolutionCards));
+                        }
+                        return ValidCardSources.Contains(cardSource);
+                    }
+
+                    var originalUseCondition = activateClass.CanUseCondition;
+                    var originalActivateCondition = activateClass.CanActivateCondition;
+
+                    ActivateClass copiedActivateClass = new ActivateClass();
+
+                    copiedActivateClass.SetUpICardEffect(
+                        activateClass.EffectName,
+                        hashtable => ValidCardSourceAtTrigger()
+                            && (originalUseCondition is null || originalUseCondition(hashtable)),
+                        card);
+
+                    // activateClass's own coroutine body may self-reference activateClass to
+                    // adjust its own OPT usage mid-effect (e.g. "if (!isUsed) activateClass.
+                    // RemoveUse();" -- real precedent: BT26_016 Chronomon: Holy Mode). Since
+                    // that closure still targets activateClass (the source), redirect
+                    // RemoveUse()/AddUse() to affect copiedActivateClass instead for the
+                    // duration of this one call, so the source card's own OPT tracking isn't
+                    // touched by a copy's activation. Push/pop (not set/clear) and a finally
+                    // block: activateClass may already be mid-activation for a different copy
+                    // (e.g. awaiting player input) when this one starts, and the underlying
+                    // coroutine could throw or be stopped externally -- both must not leave a
+                    // stale redirect in place for the source's own later activations.
+                    IEnumerator ActivateWithRedirectedUseTracking(Hashtable hashtable)
+                    {
+                        activateClass.SetIsDigimonEffect(true);//Copy effects were for some reason refusing to act as Digimon effects. Explicitly setting here to bypass this being unset
+
+                        activateClass.PushUseTrackingRedirectTarget(copiedActivateClass);
+                        try
+                        {
+                            yield return ContinuousController.instance.StartCoroutine(activateClass.Activate(hashtable));
+                        }
+                        finally
+                        {
+                            activateClass.PopUseTrackingRedirectTarget();
+                        }
+                    }
+
+                    copiedActivateClass.SetUpActivateClass(
+                        hashtable => ValidCardSourceAtActivate()
+                            && (originalActivateCondition is null || originalActivateCondition(hashtable)),
+                        ActivateWithRedirectedUseTracking,
+                        activateClass.MaxCountPerTurn,
+                        activateClass.IsOptional,
+                        activateClass.EffectDescription);
+
+                    copiedActivateClass.SetOriginalEffectSourceCard(cardSource);
+                    copiedActivateClass.SetHashString(GenerateHashString(card, cardSource, activateClass.HashString, isInheritedEffect, isLinkedEffect));
+                    copiedActivateClass.SetIsInheritedEffect(isInheritedEffect);
+                    copiedActivateClass.SetIsLinkedEffect(isLinkedEffect);
+
+                    cardEffects.Add(copiedActivateClass);
+                    cardEffects.Add(PermanentEffectFactory.AddDetailClass(
+                        thisPermanent,
+                        copiedActivateClass.EffectDescription,
+                        true,
+                        copiedActivateClass));
+                }
+                else if (cardEffect is AddDigivolutionRequirementClass)//Copy effect to exist for topCard
+                {
+                    AddDigivolutionRequirementClass source = (AddDigivolutionRequirementClass)cardEffect;
+                    AddDigivolutionRequirementClass copiedDigivolutionClass = new AddDigivolutionRequirementClass();
+
+                    copiedDigivolutionClass.SetUpICardEffect(source.EffectName, source.CanUseCondition, topCard);
+                    copiedDigivolutionClass.SetUpAddDigivolutionRequirementClass(source.GetEvoCost);
+                }
+                else
+                {
+                    cardEffect.SetIsInheritedEffect(isInheritedEffect);
+                    cardEffect.SetIsLinkedEffect(isLinkedEffect);
+                    cardEffects.Add(cardEffect);
+                }
+            }
         }
 
-        addSkillClass.SetUpAddSkillClass(
-            cardSourceCondition: cardSourceCondition,
-            getEffects: GetEffects,
-            limitTiming: null
-        );
-
-        return addSkillClass;
+        CopyEffectLock = false; //release lock
     }
 
     private static string GenerateHashString(CardSource card, CardSource cardSource, string source, bool isInherited, bool isLinked)

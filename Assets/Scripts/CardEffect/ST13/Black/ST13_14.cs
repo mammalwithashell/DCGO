@@ -202,7 +202,7 @@ public class ST13_14 : CEntity_Effect
             bool SkillCondition(ICardEffect cardEffect)
             {
                 return CardEffectCommons.IsOpponentEffect(cardEffect, card)
-                    && ((!cardEffect.EffectSourceCard.IsDualCard && cardEffect.EffectSourceCard.IsDigimon)
+                    && ((!cardEffect.EffectSourceCard.IsDualCard && (cardEffect.EffectSourceCard.IsDigimon || cardEffect.IsDigimonEffect))
                         || (cardEffect.EffectSourceCard.IsDualCard && !cardEffect.IsOptionEffect));
             }
         }

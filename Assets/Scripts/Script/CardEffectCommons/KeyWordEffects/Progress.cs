@@ -55,7 +55,7 @@ public partial class CardEffectCommons
         if (CanActivateProgress(cardSource))
         {
             CanNotAffectedClass canNotAffectedClass = new CanNotAffectedClass();
-            canNotAffectedClass.SetUpICardEffect("Isn't affected by opponent's Digimon's effect", CanUseCondition1, cardSource);
+            canNotAffectedClass.SetUpICardEffect("Isn't affected by opponent's effect", CanUseCondition1, cardSource);
             canNotAffectedClass.SetUpCanNotAffectedClass(CardCondition: CardCondition, SkillCondition: SkillCondition);
             selectedPermanent.UntilEndAttackEffects.Add((_timing) => canNotAffectedClass);
 
@@ -81,9 +81,7 @@ public partial class CardEffectCommons
 
             bool SkillCondition(ICardEffect cardEffect)
             {
-                return CardEffectCommons.IsOpponentEffect(cardEffect, cardSource)
-                    && ((!cardEffect.EffectSourceCard.IsDualCard && cardEffect.EffectSourceCard.IsDigimon)
-                        || (cardEffect.EffectSourceCard.IsDualCard && !cardEffect.IsOptionEffect));
+                return CardEffectCommons.IsOpponentEffect(cardEffect, cardSource);
             }
         }
     }

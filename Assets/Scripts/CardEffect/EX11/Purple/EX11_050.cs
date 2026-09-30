@@ -68,7 +68,8 @@ namespace DCGO.CardEffects.EX11
                 Permanent selectedOwnerDigimon = null;
 
                 bool CanSelectOwnerDigimon(Permanent permanent)
-                        => CardEffectCommons.IsPermanentExistsOnOwnerBattleAreaDigimon(permanent, card);
+                        => CardEffectCommons.IsPermanentExistsOnOwnerBattleAreaDigimon(permanent, card)
+                            && (permanent.TopCard.EqualsTraits("Dark Dragon") || permanent.TopCard.EqualsTraits("Evil Dragon"));
 
                 bool HasDigimonAbleToDelete()
                 {

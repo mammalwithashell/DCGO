@@ -1,6 +1,5 @@
 using System.Collections;
 using System.Collections.Generic;
-using System.Linq;
 using System;
 
 namespace DCGO.CardEffects.BT19
@@ -100,39 +99,17 @@ namespace DCGO.CardEffects.BT19
                                 cardEffectCondition: SkillCondition,
                                 effectDuration: EffectDuration.UntilOpponentTurnEnd,
                                 activateClass: activateClass,
-                                effectName: "Can't have DP reduced"));
-
-                            CanNotAffectedClass canNotAffectedClass = new CanNotAffectedClass();
-                            canNotAffectedClass.SetUpICardEffect("Isn't affected by opponent's option effects", CanUseCondition1, card);
-                            canNotAffectedClass.SetUpCanNotAffectedClass(CardCondition: CardCondition, SkillCondition: SkillCondition);
-                            selectedPermanent.UntilOpponentTurnEndEffects.Add((_timing) => canNotAffectedClass);
-
-                            yield return ContinuousController.instance.StartCoroutine(GManager.instance.GetComponent<Effects>().CreateBuffEffect(selectedPermanent));
-
-                            bool CanUseCondition1(Hashtable hashtable)
-                            {
-                                return CardEffectCommons.IsPermanentExistsOnBattleArea(selectedPermanent);
-                            }
-
-                            bool CardCondition(CardSource cardSource)
-                            {
-                                if (CardEffectCommons.IsPermanentExistsOnBattleArea(selectedPermanent))
-                                {
-                                    if (cardSource == selectedPermanent.TopCard)
-                                    {
-                                        return true;
-                                    }
-                                }
-
-                                return false;
-                            }
+                                effectName: "Can't have DP reduced"));                           
 
                             bool SkillCondition(ICardEffect cardEffect)
                             {
-                                return CardEffectCommons.IsOpponentEffect(cardEffect, card)
-                                    && ((!cardEffect.EffectSourceCard.IsDualCard && cardEffect.EffectSourceCard.IsOption)
-                                        || (cardEffect.EffectSourceCard.IsDualCard && cardEffect.IsOptionEffect));
+                                return CardEffectCommons.IsOpponentEffect(cardEffect, card);
                             }
+
+                            #region Give Option Effect Immunity
+                            selectedPermanent.UntilOpponentTurnEndEffects.Add((_timing) => PermanentEffectFactory.OptionEffectImmunity(selectedPermanent));
+                            yield return ContinuousController.instance.StartCoroutine(GManager.instance.GetComponent<Effects>().CreateBuffEffect(selectedPermanent));
+                            #endregion
                         }
                     }
                 }

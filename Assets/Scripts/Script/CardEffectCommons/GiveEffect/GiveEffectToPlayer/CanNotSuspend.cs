@@ -39,6 +39,8 @@ public partial class CardEffectCommons
             condition: CanUseCondition,
             effectName: effectName);
 
+        canNotSuspendClass.SetIsOptionEffect(activateClass.IsOptionEffect);
+
         AddEffectToPermanent(targetPermanent: targetPermanent, effectDuration: effectDuration, card: card, cardEffect: activateClass, timing: EffectTiming.None);
 
         if (!targetPermanent.TopCard.CanNotBeAffected(activateClass))

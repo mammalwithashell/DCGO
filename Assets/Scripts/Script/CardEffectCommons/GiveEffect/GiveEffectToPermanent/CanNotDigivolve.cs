@@ -39,6 +39,8 @@ public partial class CardEffectCommons
             condition: CanUseCondition,
             effectName: effectName);
 
+        canNotDigivolveClass.SetIsOptionEffect(activateClass.IsOptionEffect);
+
         AddEffectToPermanent(targetPermanent: targetPermanent, effectDuration: effectDuration, card: card, cardEffect: canNotDigivolveClass, timing: EffectTiming.None);
 
         if (!targetPermanent.TopCard.CanNotBeAffected(activateClass))

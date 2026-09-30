@@ -79,9 +79,10 @@ namespace DCGO.CardEffects.BT26
 
                 if (selectedPermanent != null)
                 {
+                    #region Give Digimon Effect Immunity
                     selectedPermanent.UntilOpponentTurnEndEffects.Add((_timing) => PermanentEffectFactory.DigimonEffectImmunity(selectedPermanent));
-
                     yield return ContinuousController.instance.StartCoroutine(GManager.instance.GetComponent<Effects>().CreateBuffEffect(selectedPermanent));
+                    #endregion
                 }
             }
             #endregion

@@ -2677,7 +2677,7 @@ public class Permanent
                 foreach (Permanent permanent in player.GetFieldPermanents())
                 {
                     #region 場のパーマネントの効果
-                    foreach (ICardEffect cardEffect in permanent.EffectList(EffectTiming.None).GetFlatEffects<IRebootEffect>())
+                    foreach (ICardEffect cardEffect in permanent.EffectList(EffectTiming.None).GetFlatEffects<IRebootEffect>().Cast<ICardEffect>())
                     {
                         if (cardEffect is IRebootEffect)
                         {
@@ -3853,6 +3853,10 @@ public class Permanent
             return true;
         }
     }
+    #endregion
+
+    #region Whether this permanent can change orientation
+    public bool CanChangeOrientation { get { return IsSuspended ? CanUnsuspend : CanSuspend; } }
     #endregion
 
     #region このデジモンのアタックの対象が変更できるか
