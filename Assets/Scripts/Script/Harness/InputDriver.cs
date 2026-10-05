@@ -372,14 +372,39 @@ namespace Digimon.Harness
                 int rel = actionId - Digimon.Recording.ActionSpace.ATTACK_START;
                 int attacker = rel / Digimon.Recording.ActionSpace.TARGETS_PER_ATTACKER;
                 int target   = rel % Digimon.Recording.ActionSpace.TARGETS_PER_ATTACKER;
-                if (attacker >= actor.GetFieldPermanents().Count)
+                HarnessJobStep step = _lastActionStep;
+
+                // The engine's slot is PLAY order; ours is FRAME order. When the
+                // row names the attacker by identity, resolve it on this side.
+                string attackerId = step == null ? null : step.attacker_card_id;
+                if (!string.IsNullOrEmpty(attackerId))
+                {
+                    attacker = CompactSlotByTopCardId(actor, attackerId, p => !p.IsSuspended);
+                    if (attacker < 0)
+                    {
+                        error = "attacker '" + attackerId + "' is not on the actor's battle area";
+                        return null;
+                    }
+                }
+                else if (attacker >= actor.GetFieldPermanents().Count)
                 {
                     error = "attack attacker slot " + attacker + " is empty";
                     return null;
                 }
+
                 // SECURITY_TARGET (14) is DCGO's -1 "attack the player".
                 int dcgoTarget = target == Digimon.Recording.ActionSpace.SECURITY_TARGET ? -1 : target;
-                if (dcgoTarget >= 0
+                string targetId = step == null ? null : step.attack_target_card_id;
+                if (dcgoTarget >= 0 && !string.IsNullOrEmpty(targetId))
+                {
+                    dcgoTarget = CompactSlotByTopCardId(actor.Enemy, targetId, p => p.IsSuspended);
+                    if (dcgoTarget < 0)
+                    {
+                        error = "attack target '" + targetId + "' is not on the opponent's battle area";
+                        return null;
+                    }
+                }
+                else if (dcgoTarget >= 0
                     && (actor.Enemy == null || dcgoTarget >= actor.Enemy.GetFieldPermanents().Count))
                 {
                     error = "attack target slot " + dcgoTarget + " is empty";
@@ -399,9 +424,23 @@ namespace Digimon.Harness
                 if (card == null) return null;
 
                 int frameId;
+                HarnessJobStep step = _lastActionStep;
+                string targetId = step == null ? null : step.digivolve_target_card_id;
                 if (fieldSlot == Digimon.Recording.ActionSpace.BREEDING_TARGET)
                 {
                     frameId = actor.fieldCardFrames.Count - 1;
+                }
+                else if (!string.IsNullOrEmpty(targetId))
+                {
+                    // Identity, not the engine's play-order slot (see
+                    // HarnessJobStep.digivolve_target_card_id).
+                    int compact = CompactSlotByTopCardId(actor, targetId, null);
+                    frameId = compact < 0 ? -1 : FieldSlotToFrameId(actor, compact);
+                    if (frameId < 0)
+                    {
+                        error = "digivolve target '" + targetId + "' is not on the actor's battle area";
+                        return null;
+                    }
                 }
                 else
                 {
@@ -446,7 +485,22 @@ namespace Digimon.Harness
                     return null;
                 }
                 List<Permanent> field = actor.GetFieldPermanents();
-                if (slot >= field.Count)
+                HarnessJobStep step = _lastActionStep;
+                string carrierId = step == null ? null : step.permanent_card_id;
+                if (!string.IsNullOrEmpty(carrierId))
+                {
+                    // Identity, not the engine's play-order slot (see
+                    // HarnessJobStep.permanent_card_id); prefer the copy that
+                    // actually holds the effect.
+                    slot = CompactSlotByTopCardId(actor, carrierId,
+                        p => FindDeclarableSkillIndex(p, wantLink) >= 0);
+                    if (slot < 0)
+                    {
+                        error = "effect carrier '" + carrierId + "' is not on the actor's battle area";
+                        return null;
+                    }
+                }
+                else if (slot >= field.Count)
                 {
                     error = "field-effect slot " + slot + " is empty";
                     return null;
@@ -644,6 +698,39 @@ namespace Digimon.Harness
                 return null;
             }
             return actor.HandCards[handSlot];
+        }
+
+        /// <summary>
+        /// The COMPACT field position (<c>GetFieldPermanents()</c> index -- what
+        /// <c>AttackPermanentAction</c> / <c>ActivatePermanentAction</c> carry)
+        /// of a BATTLE-AREA permanent of <paramref name="player"/> whose
+        /// TOP-CARD id is <paramref name="cardId"/>. -1 when none carries it.
+        /// </summary>
+        /// <remarks>
+        /// Copies are interchangeable for an identity, as in
+        /// <see cref="FindFrameByTopCardId"/>, but the first copy satisfying
+        /// <paramref name="prefer"/> wins (an attacker must be unsuspended, an
+        /// attack target suspended, a [Main] carrier must hold the effect).
+        /// With no preferred copy it returns the first copy, so DCGO's own
+        /// legality check speaks rather than this method quietly picking a
+        /// different card. Breeding-area permanents never match: the engine's
+        /// battle area holds none (see <c>ActionEncoder.BattleAreaCardIds</c>).
+        /// </remarks>
+        private static int CompactSlotByTopCardId(Player player, string cardId, System.Func<Permanent, bool> prefer)
+        {
+            if (player == null || string.IsNullOrEmpty(cardId)) return -1;
+            List<Permanent> field = player.GetFieldPermanents();
+            List<Permanent> battle = player.GetBattleAreaPermanents();
+            int first = -1;
+            for (int i = 0; i < field.Count; i++)
+            {
+                Permanent p = field[i];
+                if (p == null || p.TopCard == null || p.TopCard.CardID != cardId) continue;
+                if (battle != null && !battle.Contains(p)) continue;
+                if (prefer == null || prefer(p)) return i;
+                if (first < 0) first = i;
+            }
+            return first;
         }
 
         /// <summary>

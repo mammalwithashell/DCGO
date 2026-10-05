@@ -263,6 +263,37 @@ namespace Digimon.Harness
         /// </remarks>
         public string[] dna_materials = new string[0];
 
+        // -- Battle-area permanents a main-phase action names ---------------
+
+        /// <summary>
+        /// TOP-CARD ids of the battle-area permanents a main-phase action
+        /// names: the attacker and (for a Digimon target) the defender of an
+        /// attack, the carrier of an activated [Main] / link effect, and the
+        /// permanent a hand card digivolves onto. Empty (or null) = not named;
+        /// the arm then falls back to the raw slot in <see cref="action_id"/>.
+        /// </summary>
+        /// <remarks>
+        /// The Rust engine orders its battle area by PLAY order, while this
+        /// side's compact field is FRAME order and permanents migrate between
+        /// frames at runtime (see <c>ActionEncoder.BattleAreaCardIds</c>, which
+        /// records identities for the same reason in the other direction). So
+        /// the slot in an action id can name a different permanent here: the
+        /// 2026-10-05 oracle pass attacked with different Digimon on the two
+        /// sides (add-card-authoring-loop task 10.1). The harness resolves the
+        /// named permanents on the engine side at lowering time and sends their
+        /// identities; <c>InputDriver.BuildMainPhaseAction</c> resolves them
+        /// against this side's live field.
+        ///
+        /// Like <see cref="dna_materials"/>, deliberately NOT selection fields:
+        /// <see cref="IsSelection"/> ignores them, so the row still answers an
+        /// action-id prompt. <c>JsonUtility</c> ignores unknown keys, so an older
+        /// harness's job simply omits them and the slot path runs unchanged.
+        /// </remarks>
+        public string attacker_card_id = "";
+        public string attack_target_card_id = "";
+        public string permanent_card_id = "";
+        public string digivolve_target_card_id = "";
+
         /// <summary>
         /// True when this step carries a selection payload -- i.e. it answers
         /// a selection prompt rather than naming a main-phase/breeding action.
