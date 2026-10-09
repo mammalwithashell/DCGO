@@ -224,5 +224,35 @@ namespace Digimon.Harness.Tests
             LogAssert.Expect(LogType.Error, "[Harness] scripted job exam-EX12-035-0 carries no inputs");
             Assert.IsNull(HarnessJob.Parse(bad));
         }
+
+        // -- limits.timeout_seconds, enforced by JobWatcher from the claim --
+
+        [Test]
+        public void Timeout_ExpiresAtTheLimitNotBefore()
+        {
+            var limits = new HarnessJobLimits { timeout_seconds = 240 };
+            Assert.IsFalse(limits.IsExpired(239.9));
+            Assert.IsTrue(limits.IsExpired(240.0));
+        }
+
+        [Test]
+        public void Timeout_ZeroOrNegativeDisablesIt()
+        {
+            Assert.IsFalse(new HarnessJobLimits { timeout_seconds = 0 }.IsExpired(1e6));
+            Assert.IsFalse(new HarnessJobLimits { timeout_seconds = -1 }.IsExpired(1e6));
+        }
+
+        [Test]
+        public void Timeout_MessageNamesTheLimit()
+        {
+            Assert.AreEqual("timeout after 240s",
+                new HarnessJobLimits { timeout_seconds = 240 }.TimeoutMessage());
+        }
+
+        [Test]
+        public void Timeout_ParsedFromTheJob()
+        {
+            Assert.AreEqual(180, HarnessJob.Parse(ScriptedJob).limits.timeout_seconds);
+        }
     }
 }

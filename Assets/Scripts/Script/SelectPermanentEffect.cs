@@ -684,6 +684,17 @@ public class SelectPermanentEffect : MonoBehaviourPunCallbacks
                         // Decline when choosing nothing is allowed.
                         SetTargetFrames(_selectPlayer.PlayerID, null, null);
                     }
+
+                    else if (Digimon.Harness.InputDriver.IsActive)
+                    {
+                        // [Harness mod - stall] No legal set and no decline:
+                        // this AI queues nothing and the wait below never
+                        // ends. Under a scripted line the RPC is where the
+                        // line is consulted, so hand it the non-answer and
+                        // let the step decide (SelectCardEffect.AutoSelect has
+                        // the EX7-073 scope-neg story).
+                        SetTargetFrames(_selectPlayer.PlayerID, null, null);
+                    }
                 }
                 #endregion
             }

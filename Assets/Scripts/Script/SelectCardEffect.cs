@@ -648,6 +648,9 @@ public class SelectCardEffect : MonoBehaviourPunCallbacks
 
                 IList<int> indexList = Enumerable.Range(0, ValidCards.Count).ToList();
 
+                // [Harness mod - stall] Whether this AI queued an answer.
+                bool __answered = false;
+
                 if (ValidCards.Count >= _maxCount)
                 {
                     for (int i = 0; i < 1000; i++)
@@ -685,8 +688,25 @@ public class SelectCardEffect : MonoBehaviourPunCallbacks
                             photonView.RPC("SetTargetCardAndIndicies", RpcTarget.All, _selectPlayer.PlayerID, CardIDs.ToArray(), null);
                         }
 
+                        __answered = true;
                         break;
                     }
+                }
+
+                // [Harness mod - stall] This AI answers only when it can draw
+                // a legal set. With fewer valid cards than _maxCount (or 1000
+                // draws its end condition rejects) it never calls the RPC and
+                // the WaitUntil below waits forever. Under a scripted line
+                // that RPC is where the line is consulted, so the prompt
+                // wedged the player instead of failing the job: the EX7-073
+                // scope-neg exam (2026-10-06) offered one [Three Musketeers]
+                // source to a "trash 2" pick and sat for 15+ minutes. Hand the
+                // hook the AI's non-answer so the step decides, and is checked
+                // against what this prompt can end on. Plain AI play is
+                // untouched.
+                if (!__answered && Digimon.Harness.InputDriver.IsActive)
+                {
+                    SetTargetCardAndIndicies(_selectPlayer.PlayerID, new int[0], null);
                 }
             }
 
@@ -983,6 +1003,33 @@ public class SelectCardEffect : MonoBehaviourPunCallbacks
                 Digimon.Harness.InputDriver.Abort(
                     "SelectCardEffect prompt needs select_card_ids or select_cancel, got: " +
                     Digimon.Harness.SelectionAnswer.Describe(__step));
+                return;
+            }
+
+            // [Harness mod - stall] The AI path has no panel to refuse an
+            // answer the human one never accepts, so hold the step to
+            // SelectCardPanel.CanEndSelection here: exactly _maxCount picks
+            // unless _canEndNotMax, the card's own end condition, and a cancel
+            // only when "No Selection" is offered. One card for "2 cards or
+            // cancel" (EX7-073 scope-neg) is a finding, not a resolution.
+            string __why = Digimon.Harness.SelectionAnswer.WhyCannotEnd(
+                __step, CardIDs.Length, _maxCount, _canEndNotMax, _canNoSelect != null && _canNoSelect());
+            if (__why == null && !__step.select_cancel && _canEndSelectCondition != null)
+            {
+                List<CardSource> __chosen = new List<CardSource>();
+                foreach (int __ci in CardIDs)
+                {
+                    __chosen.Add(GManager.instance.turnStateMachine.gameContext.ActiveCardList[__ci]);
+                }
+                if (!_canEndSelectCondition(__chosen))
+                {
+                    __why = "the card's end condition rejects that set";
+                }
+            }
+            if (__why != null)
+            {
+                Digimon.Harness.InputDriver.AbortIncomplete(
+                    Digimon.Harness.InputDriver.KindSelectCard, __step, __why);
                 return;
             }
         }

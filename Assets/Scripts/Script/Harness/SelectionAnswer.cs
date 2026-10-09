@@ -436,6 +436,79 @@ namespace Digimon.Harness
             return string.Join(", ", parts.ToArray());
         }
 
+        // -- Can the prompt END on this answer? ---------------------------
+        // The AI path the harness drives has no panel: a selection RPC queues
+        // whatever the scripted hook hands it. So an answer DCGO's own panel
+        // could never end on either resolves as something no player could
+        // reach (the effect sees one card where it asked for two) or -- when
+        // the AI never reaches the hook at all -- wedges the player. The
+        // EX7-073 scope-neg exam (2026-10-06) was both: one [Three Musketeers]
+        // source offered to a "trash 2" pick, scripted as a one-card answer.
+
+        /// <summary>
+        /// Whether a prompt taking <paramref name="maxCount"/> picks can end
+        /// on <paramref name="picks"/> chosen cards: the count rule of
+        /// <c>SelectCardPanel.CanEndSelection</c>. Exactly
+        /// <paramref name="maxCount"/>, unless the card opts into "up to"
+        /// (<paramref name="canEndNotMax"/>); never more, since the panel
+        /// stops accepting picks at the max.
+        /// </summary>
+        public static bool PickCountCanEnd(int picks, int maxCount, bool canEndNotMax)
+        {
+            if (picks > Math.Max(maxCount, 0)) return false;
+            if (maxCount <= 0) return true;
+            return canEndNotMax || picks == maxCount;
+        }
+
+        /// <summary>
+        /// What a prompt accepts, as the abort message spells it:
+        /// "2 picks or cancel", "up to 3 picks", "1 pick".
+        /// </summary>
+        public static string DescribePickNeeds(int maxCount, bool canEndNotMax, bool canCancel)
+        {
+            string picks;
+            if (maxCount <= 0) picks = "no picks";
+            else if (canEndNotMax) picks = "up to " + maxCount + (maxCount == 1 ? " pick" : " picks");
+            else picks = maxCount + (maxCount == 1 ? " pick" : " picks");
+            return canCancel ? picks + " or cancel" : picks;
+        }
+
+        /// <summary>
+        /// Null when <paramref name="step"/> -- <paramref name="pickCount"/>
+        /// matched picks, or a cancel -- is an answer the prompt can end on;
+        /// otherwise why not, as "prompt needs ...". A cancel is the panel's
+        /// "No Selection" button, which is offered only when
+        /// <paramref name="canCancel"/>.
+        /// </summary>
+        public static string WhyCannotEnd(HarnessJobStep step, int pickCount, int maxCount,
+                                          bool canEndNotMax, bool canCancel)
+        {
+            bool ends = step != null && step.select_cancel
+                ? canCancel
+                : PickCountCanEnd(pickCount, maxCount, canEndNotMax);
+            return ends ? null : "prompt needs " + DescribePickNeeds(maxCount, canEndNotMax, canCancel);
+        }
+
+        /// <summary>
+        /// The abort message for a scripted selection that did not complete
+        /// its prompt -- the member of the prompt-mismatch family that
+        /// dcgo-harness (<c>exam/oracle.rs</c> <c>parse_prompt_mismatch</c>)
+        /// and the card loop (<c>stages/harness.py</c>
+        /// <c>incomplete_selection</c>) parse:
+        /// <c>prompt mismatch: step N selection did not complete 'Prompt' (wanted [ids], detail)</c>.
+        /// </summary>
+        /// <remarks>
+        /// <paramref name="step"/> is the scripted-input ROW (the cursor
+        /// index), like every other prompt-mismatch message; the host maps it
+        /// back to a scenario step. Keep <paramref name="detail"/> free of ')':
+        /// the parsers end it at the first one.
+        /// </remarks>
+        public static string IncompleteSelection(int step, string prompt, IList<string> wanted, string detail)
+        {
+            return "prompt mismatch: step " + step + " selection did not complete '" + (prompt ?? "") +
+                   "' (wanted [" + Join(wanted) + "], " + (detail ?? "") + ")";
+        }
+
         private static string Join(IList<string> items)
         {
             if (items == null) return "";

@@ -113,6 +113,31 @@ namespace Digimon.Harness
                     FailRunningJob(reason);
                 }
 
+                // [Harness mod] Enforce limits.timeout_seconds from the claim.
+                // Until 2026-10-09 nothing in Unity did -- job.rs documented
+                // the CLI as the enforcer, by the claimed file's age -- so a
+                // job wedged on a prompt held the player, heartbeat fresh,
+                // until the host noticed: the EX7-073 scope-neg exam sat for
+                // 15+ minutes. Filing it here frees the player by itself and
+                // hands the host a result naming the reason (plus the partial
+                // recording) rather than a silence to interpret.
+                if (CurrentJob != null && CurrentJob.limits != null
+                    && CurrentJob.limits.IsExpired((DateTime.UtcNow - StartedUtc).TotalSeconds))
+                {
+                    string timeout = CurrentJob.limits.TimeoutMessage();
+                    Debug.LogError("[Harness] job " + CurrentJob.job_id + ": " + timeout);
+                    FailRunningJob(timeout);
+                }
+
+                // [Harness mod] A scripted line stalled on a prompt fails much
+                // sooner than the timeout, as a prompt mismatch naming the
+                // step (StallWatch). This only raises the abort flag; the
+                // drain above files it on the next poll.
+                if (CurrentJob != null)
+                {
+                    InputDriver.PollStall();
+                }
+
                 if (CurrentJob == null && DcgoReady)
                 {
                     TryClaimAndStart();

@@ -74,6 +74,16 @@ namespace Digimon.Harness
         public bool IsExhausted => _cursor >= _steps.Length;
 
         /// <summary>
+        /// The step at <paramref name="index"/>, or null out of range. Never
+        /// consumes: it exists so an abort message can name the step a stall
+        /// sits on.
+        /// </summary>
+        public HarnessJobStep StepAt(int index)
+        {
+            return index >= 0 && index < _steps.Length ? _steps[index] : null;
+        }
+
+        /// <summary>
         /// Take the next scripted action id if it matches what is being asked.
         /// Advances the cursor only on success.
         /// </summary>

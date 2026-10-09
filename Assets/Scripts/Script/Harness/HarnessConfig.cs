@@ -123,6 +123,19 @@ namespace Digimon.Harness
         /// <summary>How often the watcher looks for new jobs.</summary>
         public static float PollSeconds { get; set; } = 1f;
 
+        /// <summary>
+        /// How long a prompt may sit open, with no new prompt reaching a
+        /// scripted line and no game progress, before the job fails as a
+        /// prompt mismatch (<see cref="StallWatch"/>). 0 disables it.
+        /// </summary>
+        /// <remarks>
+        /// Real time, not game time. At the default 8x time scale ten seconds
+        /// is over a minute of DCGO animation -- far past anything a scripted
+        /// step legitimately waits on, since every scripted prompt is answered
+        /// in the frame it opens.
+        /// </remarks>
+        public static float StallGraceSeconds { get; set; } = 10f;
+
         public static string JobsDir => Path.Combine(Root, "jobs");
         public static string ClaimedDir => Path.Combine(Root, "claimed");
         public static string DoneDir => Path.Combine(Root, "done");

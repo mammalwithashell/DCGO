@@ -1,4 +1,6 @@
 ﻿using System.Collections.Generic;
+using System.Globalization;
+using System.Text;
 using UnityEngine;
 
 namespace Digimon.Harness
@@ -53,6 +55,8 @@ namespace Digimon.Harness
         private static ScriptedLine _line;
         /// Step consumed by the last action-id answer -- see <see cref="LastActionStep"/>.
         private static HarnessJobStep _lastActionStep;
+        /// Fails the job when a prompt sits open with nothing moving -- see <see cref="CheckStall"/>.
+        private static StallWatch _stall;
 
         // -- Prompt kinds -------------------------------------------------
         // The CLOSED 13-kind vocabulary. These strings are the same literals
@@ -87,14 +91,16 @@ namespace Digimon.Harness
 
         public static void Install(HarnessJob job)
         {
-            if (job == null || !job.IsScripted) { _line = null; return; }
+            if (job == null || !job.IsScripted) { _line = null; _stall = null; return; }
             _line = new ScriptedLine(job.inputs);
+            _stall = new StallWatch(HarnessConfig.StallGraceSeconds);
             Debug.Log("[Harness] scripted line installed: " + job.inputs.Length + " steps");
         }
 
         public static void Release()
         {
             _line = null;
+            _stall = null;
         }
 
         /// <summary>
@@ -280,6 +286,117 @@ namespace Digimon.Harness
                 Debug.LogError("[Harness] " + reason + " (no JobWatcher to abort)");
             }
             _line = null;
+            _stall = null;
+        }
+
+        /// <summary>
+        /// Abort because the step just consumed is not an answer its
+        /// <paramref name="kind"/> prompt can end on; <paramref name="detail"/>
+        /// says what the prompt needs (see <see cref="SelectionAnswer.WhyCannotEnd"/>).
+        /// </summary>
+        /// <remarks>
+        /// The AI path has no panel to refuse it, so without this the prompt
+        /// either resolves on an answer no player could give or never closes.
+        /// Filed as a prompt mismatch: the two engines disagree about what this
+        /// prompt accepts (ours took the step sim-only).
+        /// </remarks>
+        public static void AbortIncomplete(string kind, HarnessJobStep step, string detail)
+        {
+            Abort(SelectionAnswer.IncompleteSelection(
+                Cursor - 1, kind, WantedOf(step), AnswerPrefix(step) + detail));
+        }
+
+        /// <summary>
+        /// Fail the job when a prompt has sat open, with no new prompt reaching
+        /// the line and no game progress, for
+        /// <see cref="HarnessConfig.StallGraceSeconds"/>. Called once per poll
+        /// through <see cref="PollStall"/>; takes its inputs as arguments so the
+        /// rule is testable without a game.
+        /// </summary>
+        /// <remarks>
+        /// The message names the step the line is waiting to answer -- the one
+        /// whose prompt DCGO opened without asking the script (the EX7-073
+        /// scope-neg wedge) -- or, past the end of the line, the last step.
+        /// It only raises JobWatcher's abort flag; the poll loop files it.
+        /// </remarks>
+        public static void CheckStall(float now, string progressToken, bool promptShowing)
+        {
+            if (_line == null || _stall == null) return;
+            if (!_stall.Observe(now, _line.Cursor, progressToken, promptShowing)) return;
+
+            int cursor = _line.Cursor;
+            bool pastTheEnd = _line.IsExhausted;
+            int index = pastTheEnd ? cursor - 1 : cursor;
+            HarnessJobStep step = _line.StepAt(index);
+            string prompt = step == null || string.IsNullOrEmpty(step.expect_prompt) ? "?" : step.expect_prompt;
+            string detail = "DCGO held a prompt open for "
+                + _stall.GraceSeconds.ToString("0.##", CultureInfo.InvariantCulture) + "s after "
+                + (pastTheEnd ? "the line's last step" : "step " + (cursor - 1))
+                + " with no new prompt and no game progress";
+            Abort(SelectionAnswer.IncompleteSelection(index, prompt, WantedOf(step), AnswerPrefix(step) + detail));
+        }
+
+        /// <summary>
+        /// The poll loop's half of <see cref="CheckStall"/>: the real-time
+        /// clock, whether DCGO is showing a prompt, and a fingerprint of the
+        /// game. Untestable glue, kept small.
+        /// </summary>
+        public static void PollStall()
+        {
+            if (_line == null) return;
+            GManager gm = GManager.instance;
+            bool promptShowing = gm != null && gm.commandText != null && gm.commandText.gameObject.activeSelf;
+            CheckStall(Time.realtimeSinceStartup, ProgressToken(gm), promptShowing);
+        }
+
+        /// <summary>
+        /// Anything that moves when the game does: the recorder's row count
+        /// (effect activations, reveals, resolutions), turn, phase, memory, and
+        /// each player's zone sizes and field. Read-only; not a recorder hook.
+        /// </summary>
+        private static string ProgressToken(GManager gm)
+        {
+            StringBuilder sb = new StringBuilder(128);
+            var recorder = Digimon.Recording.GameRecorder.Instance;
+            sb.Append(recorder == null ? -1 : recorder.CurrentStepIndex);
+            TurnStateMachine tsm = gm == null ? null : gm.turnStateMachine;
+            GameContext ctx = tsm == null ? null : tsm.gameContext;
+            if (tsm != null) sb.Append('|').Append(tsm.TurnCount);
+            if (ctx == null || ctx.Players == null) return sb.ToString();
+
+            sb.Append('|').Append(ctx.TurnPhase).Append('|').Append(ctx.Memory);
+            foreach (Player p in ctx.Players)
+            {
+                if (p == null) continue;
+                sb.Append('|').Append(p.HandCards.Count).Append(',').Append(p.TrashCards.Count)
+                  .Append(',').Append(p.LibraryCards.Count).Append(',').Append(p.SecurityCards.Count);
+                foreach (Permanent perm in p.GetFieldPermanents())
+                {
+                    if (perm == null || perm.TopCard == null) continue;
+                    sb.Append(';').Append(perm.TopCard.CardIndex).Append(':')
+                      .Append(perm.DigivolutionCards.Count).Append(perm.IsSuspended ? 's' : 'u');
+                }
+            }
+            return sb.ToString();
+        }
+
+        /// <summary>The card picks a step wants, for an abort message.</summary>
+        private static string[] WantedOf(HarnessJobStep step)
+        {
+            return step == null || step.select_card_ids == null ? new string[0] : step.select_card_ids;
+        }
+
+        /// <summary>
+        /// "answer ...; " for a step that wants no cards, so the message still
+        /// says what the line was going to answer. Never parenthesised: the
+        /// message's detail ends at the first ')'.
+        /// </summary>
+        private static string AnswerPrefix(HarnessJobStep step)
+        {
+            if (step == null) return "";
+            if (step.select_card_ids != null && step.select_card_ids.Length > 0) return "";
+            if (!step.IsSelection) return "answer action_id=" + step.action_id + "; ";
+            return "answer " + SelectionAnswer.Describe(step) + "; ";
         }
 
         // -- Answer decoding helpers --------------------------------------

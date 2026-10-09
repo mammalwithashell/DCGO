@@ -252,5 +252,80 @@ namespace Digimon.Harness.Tests
             var step = new HarnessJobStep { action_id = 12 };
             StringAssert.Contains("action_id=12", SelectionAnswer.Describe(step));
         }
+
+        // -- Can the prompt END on this answer? -----------------------------
+        // SelectCardPanel.CanEndSelection's rule: exactly maxCount picks
+        // unless the card opts into "up to" (canEndNotMax); cancel only when
+        // the "No Selection" button is offered (canNoSelect). The EX7-073
+        // scope-neg job answered a "2 cards or cancel" prompt with ONE card.
+
+        [Test]
+        public void PickCount_ExactMaxEnds_FewerDoesNot_WithoutUpTo()
+        {
+            Assert.IsTrue(SelectionAnswer.PickCountCanEnd(2, 2, false));
+            Assert.IsFalse(SelectionAnswer.PickCountCanEnd(1, 2, false));
+            Assert.IsFalse(SelectionAnswer.PickCountCanEnd(3, 2, false));
+        }
+
+        [Test]
+        public void PickCount_UpToEndsOnFewer_ButNeverOnMore()
+        {
+            Assert.IsTrue(SelectionAnswer.PickCountCanEnd(1, 3, true));
+            Assert.IsTrue(SelectionAnswer.PickCountCanEnd(3, 3, true));
+            Assert.IsFalse(SelectionAnswer.PickCountCanEnd(4, 3, true));
+        }
+
+        [Test]
+        public void PickCount_AZeroMaxPromptTakesNoPicks()
+        {
+            Assert.IsTrue(SelectionAnswer.PickCountCanEnd(0, 0, false));
+            Assert.IsFalse(SelectionAnswer.PickCountCanEnd(1, 0, false));
+        }
+
+        [Test]
+        public void DescribePickNeeds_SpellsOutWhatThePromptAccepts()
+        {
+            Assert.AreEqual("2 picks or cancel", SelectionAnswer.DescribePickNeeds(2, false, true));
+            Assert.AreEqual("1 pick", SelectionAnswer.DescribePickNeeds(1, false, false));
+            Assert.AreEqual("up to 3 picks or cancel", SelectionAnswer.DescribePickNeeds(3, true, true));
+            Assert.AreEqual("no picks or cancel", SelectionAnswer.DescribePickNeeds(0, false, true));
+        }
+
+        [Test]
+        public void WhyCannotEnd_OneCardForATwoCardPrompt()
+        {
+            var step = new HarnessJobStep { select_card_ids = new[] { "BT25-085" } };
+            Assert.AreEqual("prompt needs 2 picks or cancel",
+                SelectionAnswer.WhyCannotEnd(step, 1, 2, false, true));
+        }
+
+        [Test]
+        public void WhyCannotEnd_ALegalAnswerIsNull()
+        {
+            var two = new HarnessJobStep { select_card_ids = new[] { "BT25-085", "EX7-051" } };
+            Assert.IsNull(SelectionAnswer.WhyCannotEnd(two, 2, 2, false, true));
+            var cancel = new HarnessJobStep { select_cancel = true };
+            Assert.IsNull(SelectionAnswer.WhyCannotEnd(cancel, 0, 2, false, true));
+        }
+
+        [Test]
+        public void WhyCannotEnd_CancelWithNoNoSelectionButton()
+        {
+            var cancel = new HarnessJobStep { select_cancel = true };
+            Assert.AreEqual("prompt needs 1 pick",
+                SelectionAnswer.WhyCannotEnd(cancel, 0, 1, false, false));
+        }
+
+        [Test]
+        public void IncompleteSelection_IsAPromptMismatchNamingStepPromptAndPicks()
+        {
+            // The exact shape dcgo-harness (exam/oracle.rs parse_prompt_mismatch)
+            // and the card loop (stages/harness.py incomplete_selection) parse.
+            Assert.AreEqual(
+                "prompt mismatch: step 20 selection did not complete 'SelectCardEffect' " +
+                "(wanted [BT25-085], prompt needs 2 picks or cancel)",
+                SelectionAnswer.IncompleteSelection(20, "SelectCardEffect", new[] { "BT25-085" },
+                                                    "prompt needs 2 picks or cancel"));
+        }
     }
 }

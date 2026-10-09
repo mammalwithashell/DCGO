@@ -314,6 +314,22 @@ namespace Digimon.Harness
     public class HarnessJobLimits
     {
         public int max_turns = 40;
+
+        /// <summary>
+        /// Wall-clock budget from the claim. <see cref="JobWatcher"/> files
+        /// the job <c>failed</c> ("timeout after Ns") when it runs out; 0 or
+        /// less disables it.
+        /// </summary>
         public int timeout_seconds = 180;
+
+        public bool IsExpired(double elapsedSeconds)
+        {
+            return timeout_seconds > 0 && elapsedSeconds >= timeout_seconds;
+        }
+
+        public string TimeoutMessage()
+        {
+            return "timeout after " + timeout_seconds + "s";
+        }
     }
 }

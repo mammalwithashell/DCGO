@@ -82,6 +82,118 @@ namespace Digimon.Harness.Tests
             Assert.AreEqual(61, actionId);
         }
 
+        // -- A selection that cannot complete its prompt ------------------
+        // The EX7-073 scope-neg job (2026-10-06) wedged the player for 15+
+        // minutes: DCGO's SelectCardEffect wanted 2 cards or a cancel, the
+        // step named one. Both failure messages below are the
+        // "selection did not complete" member of the prompt-mismatch family,
+        // which dcgo-harness and the card loop parse.
+
+        private static HarnessJobStep OptionalYes()
+        {
+            return new HarnessJobStep
+            {
+                actor = 0,
+                expect_prompt = InputDriver.KindOptionalSkill,
+                select_has_bool = true,
+                select_bool = true,
+            };
+        }
+
+        private static HarnessJobStep PickBeelStarmon()
+        {
+            return new HarnessJobStep
+            {
+                actor = 0,
+                expect_prompt = InputDriver.KindSelectCard,
+                select_card_ids = new[] { "BT25-085" },
+            };
+        }
+
+        [Test]
+        public void AbortIncomplete_NamesTheStepJustConsumed()
+        {
+            InputDriver.Install(Job(OptionalYes(), PickBeelStarmon()));
+            InputDriver.TryAnswerStep(0, InputDriver.KindOptionalSkill, 1, null, out HarnessJobStep _);
+            Assert.IsTrue(InputDriver.TryAnswerStep(
+                0, InputDriver.KindSelectCard, 2, new[] { "BT25-085" }, out HarnessJobStep pick));
+
+            LogAssert.Expect(LogType.Error, new Regex(Regex.Escape(
+                "prompt mismatch: step 1 selection did not complete 'SelectCardEffect' " +
+                "(wanted [BT25-085], prompt needs 2 picks or cancel)")));
+            InputDriver.AbortIncomplete(InputDriver.KindSelectCard, pick, "prompt needs 2 picks or cancel");
+            Assert.IsFalse(InputDriver.IsActive);
+        }
+
+        [Test]
+        public void Stall_NamesThePendingStepThePromptNeverReached()
+        {
+            // The scope-neg shape: step 0 answered, then DCGO opened step 1's
+            // prompt without ever consulting the script.
+            InputDriver.Install(Job(OptionalYes(), PickBeelStarmon()));
+            InputDriver.TryAnswerStep(0, InputDriver.KindOptionalSkill, 1, null, out HarnessJobStep _);
+
+            InputDriver.CheckStall(100f, "board", true);
+            Assert.IsTrue(InputDriver.IsActive);
+
+            LogAssert.Expect(LogType.Error, new Regex(Regex.Escape(
+                "prompt mismatch: step 1 selection did not complete 'SelectCardEffect' " +
+                "(wanted [BT25-085], DCGO held a prompt open for 10s after step 0 " +
+                "with no new prompt and no game progress)")));
+            InputDriver.CheckStall(110f, "board", true);
+            Assert.IsFalse(InputDriver.IsActive);
+        }
+
+        [Test]
+        public void Stall_AfterTheLastStep_NamesTheLastStep()
+        {
+            InputDriver.Install(Job(PickBeelStarmon()));
+            InputDriver.TryAnswerStep(0, InputDriver.KindSelectCard, 2, new[] { "BT25-085" }, out HarnessJobStep _);
+
+            InputDriver.CheckStall(0f, "board", true);
+            LogAssert.Expect(LogType.Error, new Regex(Regex.Escape(
+                "prompt mismatch: step 0 selection did not complete 'SelectCardEffect' " +
+                "(wanted [BT25-085], DCGO held a prompt open for 10s after the line's last step " +
+                "with no new prompt and no game progress)")));
+            InputDriver.CheckStall(10f, "board", true);
+            Assert.IsFalse(InputDriver.IsActive);
+        }
+
+        [Test]
+        public void Stall_ANonCardAnswerIsDescribed()
+        {
+            InputDriver.Install(Job(PickBeelStarmon(), OptionalYes()));
+            InputDriver.TryAnswerStep(0, InputDriver.KindSelectCard, 1, new[] { "BT25-085" }, out HarnessJobStep _);
+
+            InputDriver.CheckStall(0f, "board", true);
+            LogAssert.Expect(LogType.Error, new Regex(Regex.Escape(
+                "prompt mismatch: step 1 selection did not complete 'OptionalSkill' " +
+                "(wanted [], answer select_bool=true; DCGO held a prompt open for 10s after step 0 " +
+                "with no new prompt and no game progress)")));
+            InputDriver.CheckStall(10f, "board", true);
+        }
+
+        [Test]
+        public void Stall_GameProgressKeepsTheLineAlive()
+        {
+            InputDriver.Install(Job(OptionalYes(), PickBeelStarmon()));
+            InputDriver.TryAnswerStep(0, InputDriver.KindOptionalSkill, 1, null, out HarnessJobStep _);
+
+            InputDriver.CheckStall(0f, "board-1", true);
+            InputDriver.CheckStall(9f, "board-2", true);
+            InputDriver.CheckStall(18f, "board-2", true);
+            Assert.IsTrue(InputDriver.IsActive);
+        }
+
+        [Test]
+        public void Stall_IsANoOpWithNoScriptedLine()
+        {
+            InputDriver.Release();
+            InputDriver.CheckStall(0f, "board", true);
+            InputDriver.CheckStall(1000f, "board", true);
+            Assert.IsFalse(InputDriver.IsActive);
+        }
+
         [Test]
         public void PromptKindMismatch_AbortsOnTheStepPathToo()
         {
