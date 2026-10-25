@@ -25,7 +25,7 @@ namespace Digimon.Recording
 
         /// Schema version stamped into recordings produced by the DCGO mod. The Rust replay harness
         /// rejects recordings whose schema version exceeds the version it was built against.
-        public const uint SCHEMA_VERSION = 1;
+        public const uint SCHEMA_VERSION = 2;
 
         /// Total action-space size. Used to size mask buffers.
         public const int ACTION_SPACE_SIZE = 2192;
